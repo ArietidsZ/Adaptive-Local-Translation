@@ -16,7 +16,7 @@ import logging
 import sys
 
 from config import Config
-from pipeline import Pipeline
+from subtitle_runtime.entrypoints.cli import run_cli
 
 
 def main() -> None:
@@ -80,8 +80,7 @@ def main() -> None:
         obs_source_name=args.obs_source,
     )
 
-    pipeline = Pipeline(cfg)
-    pipeline.run()
+    run_cli(cfg)
 
 
 if __name__ == "__main__":
