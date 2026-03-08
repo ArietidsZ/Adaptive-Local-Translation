@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias
+from typing import Callable, Protocol, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
+
+from subtitle_runtime.domain.events import RuntimeStatus, SubtitleEvent
 
 
 AudioChunk: TypeAlias = NDArray[np.float32]
@@ -37,3 +39,36 @@ class TextTranslatorPort(Protocol):
         source_lang: str = "",
         target_lang: str | None = None,
     ) -> str: ...
+
+
+class AudioSourcePort(Protocol):
+    def start(
+        self,
+        on_chunk: Callable[[AudioChunk], None],
+        *,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> None: ...
+
+    def stop(self) -> None: ...
+
+
+class SpeechSegmenterPort(Protocol):
+    def process_chunk(
+        self,
+        chunk: AudioChunk,
+        on_speech: Callable[[AudioChunk], None],
+    ) -> None: ...
+
+    def flush(self, on_speech: Callable[[AudioChunk], None]) -> None: ...
+
+
+class SpeechPipelinePort(Protocol):
+    def process_segment(self, segment: AudioChunk) -> SubtitleEvent | None: ...
+
+
+class SubtitleSinkPort(Protocol):
+    def publish(self, event: SubtitleEvent) -> None: ...
+
+
+class StatusSinkPort(Protocol):
+    def publish(self, status: RuntimeStatus) -> None: ...
