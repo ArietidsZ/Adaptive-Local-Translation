@@ -5,15 +5,21 @@ from typing import Any, Protocol
 
 from subtitle_runtime.application.ports import AudioChunk
 
-from audio import AudioCapture
-
 
 class AudioCaptureFactory(Protocol):
     def __call__(self, cfg: Any) -> Any: ...
 
 
+def _default_factory(cfg: Any) -> Any:
+    from audio import AudioCapture
+
+    return AudioCapture(cfg)
+
+
 class AudioCaptureAdapter:
-    def __init__(self, cfg: Any, factory: AudioCaptureFactory = AudioCapture) -> None:
+    def __init__(
+        self, cfg: Any, factory: AudioCaptureFactory = _default_factory
+    ) -> None:
         self._audio_capture = factory(cfg)
 
     def start(self, on_chunk: Callable[[AudioChunk], None]) -> None:

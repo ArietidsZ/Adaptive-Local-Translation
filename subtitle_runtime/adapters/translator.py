@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from translator import Translator
-
 
 class TranslatorFactory(Protocol):
     def __call__(self, cfg: Any) -> Any: ...
 
 
+def _default_factory(cfg: Any) -> Any:
+    from translator import Translator
+
+    return Translator(cfg)
+
+
 class TranslatorAdapter:
-    def __init__(self, cfg: Any, factory: TranslatorFactory = Translator) -> None:
+    def __init__(self, cfg: Any, factory: TranslatorFactory = _default_factory) -> None:
         self._translator = factory(cfg)
 
     def translate(
