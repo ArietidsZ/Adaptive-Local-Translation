@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from subtitle_runtime.application.ports import AudioSourcePort
 from subtitle_runtime.application.session import SessionController
 from subtitle_runtime.domain.events import RuntimeState, SubtitleEvent
 
@@ -25,6 +27,14 @@ class FakeAudioSource:
 
         self.on_chunk = on_chunk
         self.on_error = on_error
+
+    def stop(self):
+        self.stopped = True
+
+
+class LegacyAudioSource:
+    def start(self, on_chunk):
+        self.on_chunk = on_chunk
 
     def stop(self):
         self.stopped = True
@@ -64,13 +74,13 @@ class FakePipeline:
 
 def build_session(
     *,
-    audio_source: FakeAudioSource | None = None,
+    audio_source: object | None = None,
     speech_pipeline: FakePipeline | None = None,
 ):
     subtitle_sink = FakeSubtitleSink()
     status_sink = FakeStatusSink()
     session = SessionController(
-        audio_source=audio_source or FakeAudioSource(),
+        audio_source=cast(AudioSourcePort, audio_source or FakeAudioSource()),
         speech_segmenter=FakeSegmenter(),
         speech_pipeline=speech_pipeline or FakePipeline(),
         subtitle_sink=subtitle_sink,
@@ -117,3 +127,14 @@ def test_session_publishes_pipeline_output_to_subtitle_sink() -> None:
     session._handle_chunk(np.array([0.5], dtype=np.float32))
 
     assert subtitle_sink.values == [event]
+
+
+def test_session_supports_legacy_audio_source_start_signature() -> None:
+    session, _, status_sink = build_session(audio_source=LegacyAudioSource())
+
+    session.start()
+
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+    ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from subtitle_runtime.application.ports import (
     AudioChunk,
     AudioSourcePort,
@@ -32,7 +34,7 @@ class SessionController:
         self._publish_status(RuntimeState.STARTING)
 
         try:
-            self._audio_source.start(self._handle_chunk, on_error=self._handle_error)
+            self._start_audio_source()
         except Exception as error:
             self._handle_error(error)
             return
@@ -51,6 +53,15 @@ class SessionController:
     def _handle_error(self, error: Exception) -> None:
         del error
         self._publish_status(RuntimeState.FAILED)
+
+    def _start_audio_source(self) -> None:
+        parameters = inspect.signature(self._audio_source.start).parameters
+
+        if "on_error" in parameters:
+            self._audio_source.start(self._handle_chunk, on_error=self._handle_error)
+            return
+
+        self._audio_source.start(self._handle_chunk)
 
     def _publish_status(self, state: RuntimeState) -> None:
         self.status = RuntimeStatus(state=state)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Protocol, TypeAlias
+from typing import Callable, Protocol, TypeAlias, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -42,6 +42,10 @@ class TextTranslatorPort(Protocol):
 
 
 class AudioSourcePort(Protocol):
+    @overload
+    def start(self, on_chunk: Callable[[AudioChunk], None]) -> None: ...
+
+    @overload
     def start(
         self,
         on_chunk: Callable[[AudioChunk], None],
