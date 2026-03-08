@@ -27,7 +27,7 @@ class TranscriptionResult(Protocol):
 
 
 class SpeechTranscriberPort(Protocol):
-    def transcribe(self, segment: AudioChunk) -> TranscriptionResult: ...
+    def transcribe(self, segment: AudioChunk) -> str | TranscriptionResult: ...
 
 
 class TextTranslatorPort(Protocol):

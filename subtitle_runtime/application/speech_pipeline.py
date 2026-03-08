@@ -5,6 +5,7 @@ import time
 from subtitle_runtime.application.ports import (
     AudioChunk,
     SpeechTranscriberPort,
+    TranscriptionResult,
     TextTranslatorPort,
 )
 from subtitle_runtime.domain.events import SubtitleEvent
@@ -22,19 +23,33 @@ class SpeechPipeline:
         self._translator = translator
         self._target_lang = target_lang
 
-    def process_segment(self, segment: AudioChunk) -> SubtitleEvent:
+    def process_segment(self, segment: AudioChunk) -> SubtitleEvent | None:
         started_at = time.perf_counter()
         transcription = self._transcriber.transcribe(segment)
+        source_text, source_language = self._unpack_transcription(transcription)
+
+        if not source_text:
+            return None
+
         translated_text = self._translator.translate(
-            transcription.text,
-            source_lang=transcription.language,
+            source_text,
+            source_lang=source_language or None,
             target_lang=self._target_lang,
         )
         latency_ms = (time.perf_counter() - started_at) * 1000
 
         return SubtitleEvent(
-            source_text=transcription.text,
-            source_language=transcription.language,
+            source_text=source_text,
+            source_language=source_language,
             translated_text=translated_text,
             latency_ms=latency_ms,
         )
+
+    @staticmethod
+    def _unpack_transcription(
+        transcription: str | TranscriptionResult,
+    ) -> tuple[str, str]:
+        if isinstance(transcription, str):
+            return transcription, ""
+
+        return transcription.text, transcription.language
