@@ -15,5 +15,7 @@ def test_subtitle_event_preserves_translation_metadata() -> None:
         latency_ms=12.5,
     )
 
+    assert event.source_text == "hello"
+    assert event.latency_ms == 12.5
     assert event.translated_text == "你好"
     assert event.source_language == "English"
