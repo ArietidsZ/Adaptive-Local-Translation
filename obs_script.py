@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import sys
 import os
-import threading
-import queue
 import logging
 
 # Make our modules importable — the script dir is added to sys.path.
@@ -28,19 +26,21 @@ if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
 import obspython as obs  # type: ignore[import-not-found]
-import numpy as np
 
 from config import Config
-from audio import AudioCapture
-from vad import VAD
-from asr import ASR
-from translator import Translator
+from subtitle_runtime.adapters.obs_script_sink import OBSTextSourceSink
+from subtitle_runtime.domain.events import RuntimeState
+from subtitle_runtime.entrypoints.obs_plugin import (
+    OBSPluginRuntime,
+    build_obs_plugin_session,
+)
 
 logger = logging.getLogger("obs-subtitle-plugin")
 
 # ── Global state ───────────────────────────────────────────────────
 
-_pipeline: _PluginPipeline | None = None
+_runtime: OBSPluginRuntime | None = None
+_text_sink: OBSTextSourceSink | None = None
 
 # Settings (populated by OBS properties UI)
 _settings = {
@@ -119,8 +119,8 @@ def script_unload():
 
 
 def _on_start_clicked(props, prop):
-    global _pipeline
-    if _pipeline is not None:
+    global _runtime, _text_sink
+    if _runtime is not None:
         return True  # already running
 
     cfg = Config(
@@ -128,10 +128,19 @@ def _on_start_clicked(props, prop):
         asr_language=_settings["asr_language"] or None,
         translation_model=_settings["translation_model"],
         translation_target_lang=_settings["target_lang"],
+        obs_source_name=_settings["source_name"],
     )
 
-    _pipeline = _PluginPipeline(cfg, _settings["source_name"])
-    _pipeline.start()
+    _runtime = build_obs_plugin_session(cfg)
+    _text_sink = OBSTextSourceSink(obs, _settings["source_name"])
+    _runtime.session.start()
+
+    if _runtime.session.status.state is RuntimeState.FAILED:
+        _runtime = None
+        _text_sink = None
+        logger.error("Pipeline failed to start")
+        return True
+
     obs.timer_add(_timer_tick, _UPDATE_INTERVAL_MS)
     logger.info("Pipeline started")
     return True
@@ -143,12 +152,19 @@ def _on_stop_clicked(props, prop):
 
 
 def _stop_pipeline():
-    global _pipeline
+    global _runtime, _text_sink
+    was_running = _runtime is not None or _text_sink is not None
     obs.timer_remove(_timer_tick)
-    if _pipeline is not None:
-        _pipeline.stop()
-        _set_text(_pipeline.source_name, "")
-        _pipeline = None
+    if _runtime is not None:
+        _runtime.session.stop()
+        _runtime.result_sink.clear()
+        _runtime = None
+
+    if _text_sink is not None:
+        _text_sink.clear()
+        _text_sink = None
+
+    if was_running:
         logger.info("Pipeline stopped")
 
 
@@ -156,90 +172,9 @@ def _stop_pipeline():
 
 
 def _timer_tick():
-    if _pipeline is None:
+    if _runtime is None or _text_sink is None:
         return
-    text = _pipeline.poll()
+
+    text = _runtime.result_sink.poll_latest()
     if text is not None:
-        _set_text(_pipeline.source_name, text)
-
-
-def _set_text(source_name: str, text: str) -> None:
-    """Update an OBS Text (GDI+) source directly via obspython."""
-    source = obs.obs_get_source_by_name(source_name)
-    if source is None:
-        return
-    settings = obs.obs_data_create()
-    obs.obs_data_set_string(settings, "text", text)
-    obs.obs_source_update(source, settings)
-    obs.obs_data_release(settings)
-    obs.obs_source_release(source)
-
-
-# ── Background pipeline ───────────────────────────────────────────
-
-
-class _PluginPipeline:
-    """Runs ASR + translation in a background thread; exposes results via poll()."""
-
-    def __init__(self, cfg: Config, source_name: str) -> None:
-        self.source_name = source_name
-        self._result_queue: queue.Queue[str] = queue.Queue()
-        self._audio = AudioCapture(cfg)
-        self._vad = VAD(cfg)
-        self._asr = ASR(cfg)
-        self._translator = Translator(cfg)
-        self._chunk_queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=200)
-        self._thread: threading.Thread | None = None
-        self._running = False
-
-    def start(self) -> None:
-        self._running = True
-        self._audio.start(self._on_audio_chunk)
-        self._thread = threading.Thread(
-            target=self._process_loop, daemon=True, name="plugin-process"
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._running = False
-        self._audio.stop()
-        self._chunk_queue.put(None)
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
-
-    def poll(self) -> str | None:
-        """Non-blocking: returns the latest subtitle or None."""
-        result = None
-        while not self._result_queue.empty():
-            try:
-                result = self._result_queue.get_nowait()
-            except queue.Empty:
-                break
-        return result
-
-    # ── internals ──────────────────────────────────────────────────
-
-    def _on_audio_chunk(self, chunk: np.ndarray) -> None:
-        try:
-            self._chunk_queue.put_nowait(chunk)
-        except queue.Full:
-            pass
-
-    def _process_loop(self) -> None:
-        while self._running:
-            try:
-                chunk = self._chunk_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            if chunk is None:
-                break
-            self._vad.process_chunk(chunk, self._on_speech)
-
-    def _on_speech(self, segment: np.ndarray) -> None:
-        text = self._asr.transcribe(segment)
-        if not text:
-            return
-        translation = self._translator.translate(text)
-        logger.info("%s → %s", text, translation)
-        self._result_queue.put(translation)
+        _text_sink.update(text)
