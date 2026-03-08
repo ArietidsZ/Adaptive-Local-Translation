@@ -14,4 +14,7 @@ class RuntimeFailure:
     kind: str
     message: str
     severity: FailureSeverity
-    recoverable: bool
+
+    @property
+    def recoverable(self) -> bool:
+        return self.severity is FailureSeverity.RECOVERABLE
