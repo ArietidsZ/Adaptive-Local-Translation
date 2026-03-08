@@ -19,3 +19,21 @@ class AudioIngressPort(Protocol):
     def push(self, chunk: AudioChunk) -> IngressReport: ...
 
     def pop_nowait(self) -> AudioChunk: ...
+
+
+class TranscriptionResult(Protocol):
+    text: str
+    language: str
+
+
+class SpeechTranscriberPort(Protocol):
+    def transcribe(self, segment: AudioChunk) -> TranscriptionResult: ...
+
+
+class TextTranslatorPort(Protocol):
+    def translate(
+        self,
+        text: str,
+        source_lang: str | None = None,
+        target_lang: str | None = None,
+    ) -> str: ...
