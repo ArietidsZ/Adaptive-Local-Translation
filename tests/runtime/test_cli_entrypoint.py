@@ -44,6 +44,69 @@ def test_build_cli_session_returns_session_controller() -> None:
     assert session.__class__.__name__ == "SessionController"
 
 
+def test_build_cli_session_starts_operational_audio_processing(monkeypatch) -> None:
+    call_order = []
+    sink = FakeSink()
+
+    class FakeAudioCaptureAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def start(self, on_chunk) -> None:
+            call_order.append("start")
+            on_chunk(np.array([0.25], dtype=np.float32))
+            call_order.append("after-callback")
+
+        def stop(self) -> None:
+            call_order.append("stop")
+
+    class FakeVADAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def process_chunk(self, chunk, on_speech) -> None:
+            call_order.append("segmenter")
+            on_speech(chunk)
+
+        def flush(self, on_speech) -> None:
+            del on_speech
+
+    class FakeASRAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def transcribe(self, segment) -> str:
+            del segment
+            call_order.append("asr")
+            return "hello"
+
+    class FakeTranslatorAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def translate(self, text, source_lang="", target_lang=None) -> str:
+            del source_lang, target_lang
+            call_order.append(f"translate:{text}")
+            return "ni hao"
+
+    monkeypatch.setattr(cli_module, "AudioCaptureAdapter", FakeAudioCaptureAdapter)
+    monkeypatch.setattr(cli_module, "VADAdapter", FakeVADAdapter)
+    monkeypatch.setattr(cli_module, "ASRAdapter", FakeASRAdapter)
+    monkeypatch.setattr(cli_module, "TranslatorAdapter", FakeTranslatorAdapter)
+
+    session = build_cli_session(
+        Config(),
+        subtitle_sink=sink,
+        status_sink=FakeSink(),
+    )
+
+    session.start()
+    session._audio_source.stop()
+
+    assert call_order.index("after-callback") < call_order.index("segmenter")
+    assert sink.values[-1].translated_text == "ni hao"
+
+
 def test_run_cli_exits_without_sleep_when_startup_fails(monkeypatch) -> None:
     class FailingAudioCaptureAdapter:
         def __init__(self, cfg) -> None:
@@ -73,23 +136,23 @@ def test_run_cli_exits_without_sleep_when_startup_fails(monkeypatch) -> None:
     assert session.status.state is RuntimeState.FAILED
 
 
-def test_run_cli_processes_audio_after_capture_callback_returns(monkeypatch) -> None:
+def test_run_cli_drains_buffered_audio_during_shutdown(monkeypatch) -> None:
     call_order = []
     sink = FakeSink()
 
     class FakeAudioCaptureAdapter:
         def __init__(self, cfg) -> None:
             del cfg
-            self.stopped = 0
+            self._on_chunk = None
 
         def start(self, on_chunk) -> None:
             call_order.append("start")
-            on_chunk(np.array([0.25], dtype=np.float32))
-            call_order.append("after-callback")
+            self._on_chunk = on_chunk
 
         def stop(self) -> None:
             call_order.append("stop")
-            self.stopped += 1
+            self._on_chunk(np.array([0.25], dtype=np.float32))
+            call_order.append("after-stop-chunk")
 
     class FakeVADAdapter:
         def __init__(self, cfg) -> None:
@@ -134,7 +197,8 @@ def test_run_cli_processes_audio_after_capture_callback_returns(monkeypatch) -> 
 
     cli_module.run_cli(Config())
 
-    assert call_order.index("after-callback") < call_order.index("segmenter")
+    assert call_order.index("stop") < call_order.index("segmenter")
+    assert call_order.index("after-stop-chunk") < call_order.index("segmenter")
     assert sink.values[-1].translated_text == "ni hao"
     assert sink.cleared == 1
     assert sink.closed == 1

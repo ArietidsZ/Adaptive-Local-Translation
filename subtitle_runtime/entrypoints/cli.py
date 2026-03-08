@@ -31,14 +31,15 @@ class _LazyAudioSource:
 
     def start(self, on_chunk, *, on_error=None) -> None:
         adapter = self._get_adapter()
-        parameters = inspect.signature(adapter.start).parameters
+        start = getattr(adapter, "start")
+        parameters = inspect.signature(start).parameters
 
         if "on_error" in parameters:
-            adapter.start(on_chunk, on_error=on_error)
+            start(on_chunk, on_error=on_error)
             return
 
         del on_error
-        adapter.start(on_chunk)
+        start(on_chunk)
 
     def stop(self) -> None:
         if self._adapter is None:
@@ -93,30 +94,70 @@ class _LazySpeechPipeline:
         return self._pipeline
 
 
-class _IngressingAudioSource:
-    def __init__(self, audio_source, ingress: AudioIngress) -> None:
+class _QueuedAudioSource:
+    def __init__(self, audio_source: _LazyAudioSource, ingress: AudioIngress) -> None:
         self._audio_source = audio_source
         self._ingress = ingress
+        self._drain_thread = None
+        self._on_chunk = None
+        self._stopping = False
+        self._idle_wait = threading.Event()
 
     def start(self, on_chunk, *, on_error=None) -> None:
-        del on_chunk
-        self._audio_source.start(self._ingress.push, on_error=on_error)
+        self._on_chunk = on_chunk
+        self._stopping = False
+        self._drain_thread = threading.Thread(
+            target=self._drain_loop,
+            daemon=True,
+            name="cli-audio-ingress",
+        )
+        self._drain_thread.start()
+
+        try:
+            self._audio_source.start(self._ingress.push, on_error=on_error)
+        except Exception:
+            self._stopping = True
+            self._drain_thread.join(timeout=1.0)
+            self._drain_thread = None
+            raise
 
     def stop(self) -> None:
         self._audio_source.stop()
+        self._stopping = True
+
+        if self._drain_thread is not None:
+            self._drain_thread.join(timeout=1.0)
+            self._drain_thread = None
+
+    def _drain_loop(self) -> None:
+        while True:
+            try:
+                chunk = self._ingress.pop_nowait()
+            except queue.Empty:
+                if self._stopping:
+                    return
+
+                self._idle_wait.wait(0.01)
+                continue
+
+            if self._on_chunk is not None:
+                self._on_chunk(chunk)
 
 
 class _CLIRuntime:
     def __init__(self, cfg, *, subtitle_sink, status_sink) -> None:
         self._stop_event = threading.Event()
         self._ingress = AudioIngress(maxsize=200)
-        self._audio_source = _LazyAudioSource(cfg)
+        self._capture_audio_source = _LazyAudioSource(cfg)
+        self._audio_source = _QueuedAudioSource(
+            self._capture_audio_source, self._ingress
+        )
         self._speech_segmenter = _LazySpeechSegmenter(cfg)
         self._speech_pipeline = _LazySpeechPipeline(cfg)
         self._subtitle_sink = subtitle_sink
         self._status_sink = status_sink
         self.session = SessionController(
-            audio_source=_IngressingAudioSource(self._audio_source, self._ingress),
+            audio_source=self._audio_source,
             speech_segmenter=self._speech_segmenter,
             speech_pipeline=self._speech_pipeline,
             subtitle_sink=subtitle_sink,
@@ -128,9 +169,6 @@ class _CLIRuntime:
 
         try:
             while not self._stop_event.is_set():
-                if self._drain_ingress():
-                    continue
-
                 time.sleep(0.05)
         except KeyboardInterrupt:
             self._stop_event.set()
@@ -144,20 +182,6 @@ class _CLIRuntime:
 
     def close(self) -> None:
         self._subtitle_sink.close()
-
-    def _drain_ingress(self) -> bool:
-        handled_chunk = False
-
-        while not self._stop_event.is_set():
-            try:
-                chunk = self._ingress.pop_nowait()
-            except queue.Empty:
-                return handled_chunk
-
-            handled_chunk = True
-            self._speech_segmenter.process_chunk(chunk, self._publish_segment)
-
-        return handled_chunk
 
     def _publish_segment(self, segment) -> None:
         event = self._speech_pipeline.process_segment(segment)
