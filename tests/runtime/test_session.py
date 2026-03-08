@@ -20,6 +20,7 @@ from subtitle_runtime.domain.events import RuntimeState, SubtitleEvent
 class FakeAudioSource:
     def __init__(self, *, startup_error: Exception | None = None):
         self._startup_error = startup_error
+        self.stopped = False
 
     def start(self, on_chunk, *, on_error=None):
         if self._startup_error is not None:
@@ -41,10 +42,14 @@ class LegacyAudioSource:
 
 
 class FakeSegmenter:
+    def __init__(self) -> None:
+        self.flushed = False
+
     def process_chunk(self, chunk, on_speech):
         on_speech(chunk)
 
     def flush(self, on_speech):
+        self.flushed = True
         return None
 
 
@@ -75,23 +80,25 @@ class FakePipeline:
 def build_session(
     *,
     audio_source: object | None = None,
+    speech_segmenter: FakeSegmenter | None = None,
     speech_pipeline: FakePipeline | None = None,
 ):
     subtitle_sink = FakeSubtitleSink()
     status_sink = FakeStatusSink()
+    segmenter = speech_segmenter or FakeSegmenter()
     session = SessionController(
         audio_source=cast(AudioSourcePort, audio_source or FakeAudioSource()),
-        speech_segmenter=FakeSegmenter(),
+        speech_segmenter=segmenter,
         speech_pipeline=speech_pipeline or FakePipeline(),
         subtitle_sink=subtitle_sink,
         status_sink=status_sink,
     )
 
-    return session, subtitle_sink, status_sink
+    return session, subtitle_sink, status_sink, segmenter
 
 
 def test_session_publishes_starting_then_running_statuses() -> None:
-    session, _, status_sink = build_session()
+    session, _, status_sink, _ = build_session()
 
     session.start()
 
@@ -102,7 +109,7 @@ def test_session_publishes_starting_then_running_statuses() -> None:
 
 
 def test_session_publishes_failed_status_when_startup_raises() -> None:
-    session, _, status_sink = build_session(
+    session, _, status_sink, _ = build_session(
         audio_source=FakeAudioSource(startup_error=RuntimeError("boom"))
     )
 
@@ -121,7 +128,9 @@ def test_session_publishes_pipeline_output_to_subtitle_sink() -> None:
         translated_text="ni hao",
         latency_ms=1.0,
     )
-    session, subtitle_sink, _ = build_session(speech_pipeline=FakePipeline(event=event))
+    session, subtitle_sink, _, _ = build_session(
+        speech_pipeline=FakePipeline(event=event)
+    )
 
     session.start()
     session._handle_chunk(np.array([0.5], dtype=np.float32))
@@ -130,7 +139,7 @@ def test_session_publishes_pipeline_output_to_subtitle_sink() -> None:
 
 
 def test_session_supports_legacy_audio_source_start_signature() -> None:
-    session, _, status_sink = build_session(audio_source=LegacyAudioSource())
+    session, _, status_sink, _ = build_session(audio_source=LegacyAudioSource())
 
     session.start()
 
@@ -138,3 +147,18 @@ def test_session_supports_legacy_audio_source_start_signature() -> None:
         RuntimeState.STARTING,
         RuntimeState.RUNNING,
     ]
+
+
+def test_session_stop_stops_audio_source_and_flushes_segmenter() -> None:
+    audio_source = FakeAudioSource()
+    segmenter = FakeSegmenter()
+    session, _, _, _ = build_session(
+        audio_source=audio_source,
+        speech_segmenter=segmenter,
+    )
+
+    session.start()
+    session.stop()
+
+    assert audio_source.stopped is True
+    assert segmenter.flushed is True

@@ -28,10 +28,13 @@ class SessionController:
         self._speech_pipeline = speech_pipeline
         self._subtitle_sink = subtitle_sink
         self._status_sink = status_sink
+        self._running = False
+        self._stopped = False
         self.status = RuntimeStatus(state=RuntimeState.STARTING)
 
     def start(self) -> None:
         self._publish_status(RuntimeState.STARTING)
+        self._stopped = False
 
         try:
             self._start_audio_source()
@@ -39,7 +42,19 @@ class SessionController:
             self._handle_error(error)
             return
 
+        self._running = True
         self._publish_status(RuntimeState.RUNNING)
+
+    def stop(self) -> None:
+        if self._stopped or not self._running:
+            return
+
+        try:
+            self._audio_source.stop()
+        finally:
+            self._speech_segmenter.flush(self._handle_segment)
+            self._running = False
+            self._stopped = True
 
     def _handle_chunk(self, chunk: AudioChunk) -> None:
         self._speech_segmenter.process_chunk(chunk, self._handle_segment)
@@ -52,6 +67,7 @@ class SessionController:
 
     def _handle_error(self, error: Exception) -> None:
         del error
+        self._running = False
         self._publish_status(RuntimeState.FAILED)
 
     def _start_audio_source(self) -> None:

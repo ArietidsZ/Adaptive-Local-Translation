@@ -175,8 +175,7 @@ class _CLIRuntime:
 
     def shutdown(self) -> None:
         self._stop_event.set()
-        self._audio_source.stop()
-        self._speech_segmenter.flush(self._publish_segment)
+        self.session.stop()
         self._subtitle_sink.clear()
         self._subtitle_sink.close()
 
