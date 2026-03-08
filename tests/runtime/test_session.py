@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -10,12 +12,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from subtitle_runtime.application.session import SessionController
-from subtitle_runtime.domain.events import RuntimeState
+from subtitle_runtime.domain.events import RuntimeState, SubtitleEvent
 
 
 class FakeAudioSource:
+    def __init__(self, *, startup_error: Exception | None = None):
+        self._startup_error = startup_error
+
     def start(self, on_chunk, *, on_error=None):
+        if self._startup_error is not None:
+            raise self._startup_error
+
         self.on_chunk = on_chunk
+        self.on_error = on_error
 
     def stop(self):
         self.stopped = True
@@ -45,17 +54,66 @@ class FakeStatusSink:
         self.values.append(status)
 
 
-def test_session_transitions_to_running() -> None:
+class FakePipeline:
+    def __init__(self, event: SubtitleEvent | None = None):
+        self._event = event
+
+    def process_segment(self, segment):
+        return self._event
+
+
+def build_session(
+    *,
+    audio_source: FakeAudioSource | None = None,
+    speech_pipeline: FakePipeline | None = None,
+):
+    subtitle_sink = FakeSubtitleSink()
+    status_sink = FakeStatusSink()
     session = SessionController(
-        audio_source=FakeAudioSource(),
+        audio_source=audio_source or FakeAudioSource(),
         speech_segmenter=FakeSegmenter(),
-        speech_pipeline=type(
-            "Pipeline", (), {"process_segment": lambda self, segment: None}
-        )(),
-        subtitle_sink=FakeSubtitleSink(),
-        status_sink=FakeStatusSink(),
+        speech_pipeline=speech_pipeline or FakePipeline(),
+        subtitle_sink=subtitle_sink,
+        status_sink=status_sink,
+    )
+
+    return session, subtitle_sink, status_sink
+
+
+def test_session_publishes_starting_then_running_statuses() -> None:
+    session, _, status_sink = build_session()
+
+    session.start()
+
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+    ]
+
+
+def test_session_publishes_failed_status_when_startup_raises() -> None:
+    session, _, status_sink = build_session(
+        audio_source=FakeAudioSource(startup_error=RuntimeError("boom"))
     )
 
     session.start()
 
-    assert session.status.state == RuntimeState.RUNNING
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.FAILED,
+    ]
+
+
+def test_session_publishes_pipeline_output_to_subtitle_sink() -> None:
+    event = SubtitleEvent(
+        source_text="hello",
+        source_language="en",
+        translated_text="ni hao",
+        latency_ms=1.0,
+    )
+    session, subtitle_sink, _ = build_session(speech_pipeline=FakePipeline(event=event))
+
+    session.start()
+    session._handle_chunk(np.array([0.5], dtype=np.float32))
+
+    assert subtitle_sink.values == [event]

@@ -29,7 +29,14 @@ class SessionController:
         self.status = RuntimeStatus(state=RuntimeState.STARTING)
 
     def start(self) -> None:
-        self._audio_source.start(self._handle_chunk, on_error=self._handle_error)
+        self._publish_status(RuntimeState.STARTING)
+
+        try:
+            self._audio_source.start(self._handle_chunk, on_error=self._handle_error)
+        except Exception as error:
+            self._handle_error(error)
+            return
+
         self._publish_status(RuntimeState.RUNNING)
 
     def _handle_chunk(self, chunk: AudioChunk) -> None:
