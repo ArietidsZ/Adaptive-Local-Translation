@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import signal
 import sys
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -172,6 +174,78 @@ def test_build_cli_session_stop_drains_buffered_audio(monkeypatch) -> None:
     assert call_order.index("after-stop-chunk") < call_order.index("segmenter")
     assert call_order.index("segmenter") < call_order.index("flush")
     assert sink.values[-1].translated_text == "ni hao"
+
+
+def test_build_cli_session_stop_waits_for_inflight_processing(monkeypatch) -> None:
+    call_order = []
+    sink = FakeSink()
+    allow_processing = threading.Event()
+
+    class FakeAudioCaptureAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def start(self, on_chunk) -> None:
+            on_chunk(np.array([0.25], dtype=np.float32))
+
+        def stop(self) -> None:
+            call_order.append("stop")
+
+    class FakeVADAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def process_chunk(self, chunk, on_speech) -> None:
+            call_order.append("segmenter-start")
+            allow_processing.wait()
+            call_order.append("segmenter-finish")
+            on_speech(chunk)
+
+        def flush(self, on_speech) -> None:
+            del on_speech
+            call_order.append("flush")
+
+    class FakeASRAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def transcribe(self, segment) -> str:
+            del segment
+            return "hello"
+
+    class FakeTranslatorAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def translate(self, text, source_lang="", target_lang=None) -> str:
+            del source_lang, target_lang
+            return text
+
+    monkeypatch.setattr(cli_module, "AudioCaptureAdapter", FakeAudioCaptureAdapter)
+    monkeypatch.setattr(cli_module, "VADAdapter", FakeVADAdapter)
+    monkeypatch.setattr(cli_module, "ASRAdapter", FakeASRAdapter)
+    monkeypatch.setattr(cli_module, "TranslatorAdapter", FakeTranslatorAdapter)
+
+    session = build_cli_session(
+        Config(),
+        subtitle_sink=sink,
+        status_sink=FakeSink(),
+    )
+
+    session.start()
+
+    stop_thread = threading.Thread(target=session.stop)
+    stop_thread.start()
+    time.sleep(1.05)
+
+    assert "flush" not in call_order
+    assert stop_thread.is_alive()
+
+    allow_processing.set()
+    stop_thread.join(timeout=1.0)
+
+    assert not stop_thread.is_alive()
+    assert call_order.index("segmenter-finish") < call_order.index("flush")
 
 
 def test_run_cli_exits_without_sleep_when_startup_fails(monkeypatch) -> None:

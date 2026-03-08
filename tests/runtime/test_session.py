@@ -162,3 +162,20 @@ def test_session_stop_stops_audio_source_and_flushes_segmenter() -> None:
 
     assert audio_source.stopped is True
     assert segmenter.flushed is True
+
+
+def test_session_stop_cleans_up_after_async_error() -> None:
+    audio_source = FakeAudioSource()
+    segmenter = FakeSegmenter()
+    session, _, status_sink, _ = build_session(
+        audio_source=audio_source,
+        speech_segmenter=segmenter,
+    )
+
+    session.start()
+    audio_source.on_error(RuntimeError("boom"))
+    session.stop()
+
+    assert audio_source.stopped is True
+    assert segmenter.flushed is True
+    assert status_sink.values[-1].state is RuntimeState.FAILED

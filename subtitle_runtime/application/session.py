@@ -46,7 +46,7 @@ class SessionController:
         self._publish_status(RuntimeState.RUNNING)
 
     def stop(self) -> None:
-        if self._stopped or not self._running:
+        if self._stopped:
             return
 
         try:

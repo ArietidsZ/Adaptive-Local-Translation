@@ -106,6 +106,7 @@ class _QueuedAudioSource:
     def start(self, on_chunk, *, on_error=None) -> None:
         self._on_chunk = on_chunk
         self._stopping = False
+        self._idle_wait.clear()
         self._drain_thread = threading.Thread(
             target=self._drain_loop,
             daemon=True,
@@ -117,16 +118,18 @@ class _QueuedAudioSource:
             self._audio_source.start(self._ingress.push, on_error=on_error)
         except Exception:
             self._stopping = True
-            self._drain_thread.join(timeout=1.0)
+            self._idle_wait.set()
+            self._drain_thread.join()
             self._drain_thread = None
             raise
 
     def stop(self) -> None:
         self._audio_source.stop()
         self._stopping = True
+        self._idle_wait.set()
 
         if self._drain_thread is not None:
-            self._drain_thread.join(timeout=1.0)
+            self._drain_thread.join()
             self._drain_thread = None
 
     def _drain_loop(self) -> None:
