@@ -55,6 +55,11 @@ class EmptyTranscriber:
         return ""
 
 
+class WhitespaceObjectTranscriber:
+    def transcribe(self, segment):
+        return type("Result", (), {"text": "   ", "language": "English"})()
+
+
 def test_speech_pipeline_returns_subtitle_event() -> None:
     pipeline = SpeechPipeline(FakeTranscriber(), FakeTranslator(), target_lang="zh")
 
@@ -80,6 +85,20 @@ def test_speech_pipeline_supports_string_transcriber_results() -> None:
 def test_speech_pipeline_skips_empty_transcripts() -> None:
     translator = TrackingTranslator()
     pipeline = SpeechPipeline(EmptyTranscriber(), translator, target_lang="zh")
+
+    event = pipeline.process_segment(np.array([0.25], dtype=np.float32))
+
+    assert event is None
+    assert translator.calls == 0
+
+
+def test_speech_pipeline_skips_whitespace_object_transcripts() -> None:
+    translator = TrackingTranslator()
+    pipeline = SpeechPipeline(
+        WhitespaceObjectTranscriber(),
+        translator,
+        target_lang="zh",
+    )
 
     event = pipeline.process_segment(np.array([0.25], dtype=np.float32))
 

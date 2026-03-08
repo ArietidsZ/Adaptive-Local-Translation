@@ -50,6 +50,6 @@ class SpeechPipeline:
         transcription: str | TranscriptionResult,
     ) -> tuple[str, str]:
         if isinstance(transcription, str):
-            return transcription, ""
+            return transcription.strip(), ""
 
-        return transcription.text, transcription.language
+        return transcription.text.strip(), transcription.language
