@@ -34,6 +34,6 @@ class TextTranslatorPort(Protocol):
     def translate(
         self,
         text: str,
-        source_lang: str | None = None,
+        source_lang: str = "",
         target_lang: str | None = None,
     ) -> str: ...

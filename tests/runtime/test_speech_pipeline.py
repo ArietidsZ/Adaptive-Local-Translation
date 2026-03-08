@@ -30,8 +30,9 @@ class FakeTranslator:
 class StringTranslator:
     def translate(self, text, source_lang=None, target_lang=None):
         assert text == "hello"
-        assert source_lang is None
+        assert source_lang == ""
         assert target_lang == "zh"
+        source_lang.lower()
         return "你好"
 
 

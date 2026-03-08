@@ -33,7 +33,7 @@ class SpeechPipeline:
 
         translated_text = self._translator.translate(
             source_text,
-            source_lang=source_language or None,
+            source_lang=source_language,
             target_lang=self._target_lang,
         )
         latency_ms = (time.perf_counter() - started_at) * 1000
