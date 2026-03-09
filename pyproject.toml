@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adaptive-local-translation"
+version = "0.0.0"
+description = "Runtime and entrypoints for local subtitle translation"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+py-modules = [
+    "asr",
+    "audio",
+    "config",
+    "engine",
+    "main",
+    "obs",
+    "obs_script",
+    "pipeline",
+    "translator",
+    "vad",
+]
+
+[tool.setuptools.packages.find]
+include = ["subtitle_runtime*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"obs_script.py" = ["E402", "I001"]
+"subtitle_runtime/application/__init__.py" = ["I001"]
+"subtitle_runtime/application/ports.py" = ["I001"]
+"subtitle_runtime/application/speech_pipeline.py" = ["I001"]
+"subtitle_runtime/domain/__init__.py" = ["I001"]
+"tests/runtime/test_adapters.py" = ["E402", "E731"]
+"tests/runtime/test_audio_ingress.py" = ["E402", "I001"]
+"tests/runtime/test_cli_entrypoint.py" = ["E402", "I001"]
+"tests/runtime/test_errors.py" = ["E402", "I001"]
+"tests/runtime/test_events.py" = ["E402", "I001"]
+"tests/runtime/test_integration_session.py" = ["I001"]
+"tests/runtime/test_obs_script_bridge.py" = ["E402", "I001"]
+"tests/runtime/test_session.py" = ["E402", "I001"]
+"tests/runtime/test_speech_pipeline.py" = ["E402", "I001"]
+"tests/test_engine.py" = ["I001"]
+"tests/test_translator.py" = ["E402", "I001"]

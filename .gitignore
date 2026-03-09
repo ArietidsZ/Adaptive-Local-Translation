@@ -29,3 +29,6 @@ models/
 *.pt
 *.bin
 *.safetensors
+
+# Local git worktrees
+.worktrees/
