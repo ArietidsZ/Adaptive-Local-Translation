@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from config import Config
+
 
 class StubTranslator:
     def __init__(self, cfg):
@@ -69,3 +71,22 @@ def test_audio_capture_adapter_forwards_on_error_callback() -> None:
 
     assert received["on_chunk"] is callback
     assert received["on_error"] is on_error
+
+
+def test_audio_capture_reports_background_startup_failure(monkeypatch) -> None:
+    audio_module = importlib.import_module("audio")
+    errors = []
+
+    class FailingPyAudioModule:
+        class PyAudio:
+            def __init__(self) -> None:
+                raise RuntimeError("startup failed")
+
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", FailingPyAudioModule())
+
+    capture = audio_module.AudioCapture(Config())
+    capture.start(lambda chunk: chunk, on_error=errors.append)
+    capture._thread.join(timeout=1.0)
+
+    assert [str(error) for error in errors] == ["startup failed"]
+    assert capture._running is False

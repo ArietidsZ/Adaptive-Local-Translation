@@ -61,10 +61,11 @@ class AudioCapture:
         callback: Callable[[np.ndarray], None],
         on_error: Callable[[Exception], None] | None,
     ) -> None:
-        import pyaudiowpatch as pyaudio  # Windows-only; imported here to fail fast
-
-        pa = pyaudio.PyAudio()
+        pa = None
         try:
+            import pyaudiowpatch as pyaudio  # Windows-only; imported here to fail fast
+
+            pa = pyaudio.PyAudio()
             wasapi_info = _find_wasapi_host(pa)
             loopback = _find_loopback_device(pa, wasapi_info)
             logger.info(
@@ -109,7 +110,8 @@ class AudioCapture:
                 on_error(error)
         finally:
             self._running = False
-            pa.terminate()
+            if pa is not None:
+                pa.terminate()
 
 
 # ── helpers ────────────────────────────────────────────────────────
