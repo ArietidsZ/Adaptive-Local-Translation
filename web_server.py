@@ -121,9 +121,9 @@ class WebDashboard:
         msg_type = msg.get("type", "")
 
         if msg_type == "start":
-            self._start_engine()
+            await self._start_engine()
         elif msg_type == "stop":
-            self._stop_engine()
+            await self._stop_engine()
         elif msg_type == "config":
             self._apply_config(msg)
         elif msg_type == "get_config":
@@ -131,12 +131,14 @@ class WebDashboard:
 
     # ── Session management ─────────────────────────────────────────
 
-    def _start_engine(self) -> None:
+    async def _start_engine(self) -> None:
         if self._session is not None:
             status = self._session.status
             if status.state in {RuntimeState.RUNNING, RuntimeState.STARTING}:
                 return
-            self._session.stop()
+
+            old_session = self._session
+            await asyncio.to_thread(old_session.stop)
 
         self._session = build_cli_session(
             self._cfg,
@@ -146,9 +148,10 @@ class WebDashboard:
         self._session.start()
         logger.info("Session started via web dashboard")
 
-    def _stop_engine(self) -> None:
+    async def _stop_engine(self) -> None:
         if self._session is not None:
-            self._session.stop()
+            session = self._session
+            await asyncio.to_thread(session.stop)
             self._session = None
             logger.info("Session stopped via web dashboard")
 
@@ -192,7 +195,7 @@ class WebDashboard:
 
         async def _send() -> None:
             stale: list[web.WebSocketResponse] = []
-            for ws in self._clients:
+            for ws in list(self._clients):
                 try:
                     await ws.send_json(msg)
                 except Exception:
