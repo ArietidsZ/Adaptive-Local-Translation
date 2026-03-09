@@ -440,3 +440,54 @@ def test_run_cli_registers_sigterm_handler_and_shuts_down(monkeypatch) -> None:
     assert sink.values == ["stopped"]
     assert sink.cleared == 1
     assert sink.closed == 1
+
+
+def test_run_cli_stops_after_post_start_async_failure(monkeypatch) -> None:
+    sink = FakeSink()
+    audio_source = None
+    sleep_calls = []
+
+    class FakeAudioCaptureAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+            nonlocal audio_source
+            audio_source = self
+            self.on_error = None
+
+        def start(self, on_chunk, *, on_error=None) -> None:
+            del on_chunk
+            self.on_error = on_error
+
+        def stop(self) -> None:
+            sink.values.append("stopped")
+
+    class FakeVADAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def process_chunk(self, chunk, on_speech) -> None:
+            del chunk, on_speech
+
+        def flush(self, on_speech) -> None:
+            del on_speech
+
+    def fail_after_async_error(seconds: float) -> None:
+        del seconds
+        sleep_calls.append("sleep")
+        audio_source.on_error(RuntimeError("boom"))
+
+        if len(sleep_calls) > 1:
+            raise AssertionError("run_cli kept sleeping after async failure")
+
+    monkeypatch.setattr(cli_module, "AudioCaptureAdapter", FakeAudioCaptureAdapter)
+    monkeypatch.setattr(cli_module, "VADAdapter", FakeVADAdapter)
+    monkeypatch.setattr(cli_module, "OBSWebSocketSubtitleAdapter", lambda cfg: sink)
+    monkeypatch.setattr(cli_module.time, "sleep", fail_after_async_error)
+
+    session = cli_module.run_cli(Config())
+
+    assert session.status.state is RuntimeState.FAILED
+    assert sleep_calls == ["sleep"]
+    assert sink.values == ["stopped"]
+    assert sink.cleared == 1
+    assert sink.closed == 1

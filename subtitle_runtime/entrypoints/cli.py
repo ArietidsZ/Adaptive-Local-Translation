@@ -24,6 +24,15 @@ class NullStatusSink:
         del status
 
 
+class _RuntimeStatusSink:
+    def __init__(self, stop_event: threading.Event) -> None:
+        self._stop_event = stop_event
+
+    def publish(self, status: Any) -> None:
+        if getattr(status, "state", None) is RuntimeState.FAILED:
+            self._stop_event.set()
+
+
 class _LazyAudioSource:
     def __init__(self, cfg) -> None:
         self._cfg = cfg
@@ -148,8 +157,8 @@ class _QueuedAudioSource:
 
 
 class _CLIRuntime:
-    def __init__(self, cfg, *, subtitle_sink, status_sink) -> None:
-        self._stop_event = threading.Event()
+    def __init__(self, cfg, *, subtitle_sink, status_sink, stop_event=None) -> None:
+        self._stop_event = stop_event or threading.Event()
         self._ingress = AudioIngress(maxsize=200)
         self._capture_audio_source = _LazyAudioSource(cfg)
         self._audio_source = _QueuedAudioSource(
@@ -201,8 +210,15 @@ class _CLIRuntime:
             signal.signal(signal.SIGTERM, _handler)
 
 
-def _build_cli_runtime(cfg, *, subtitle_sink, status_sink) -> _CLIRuntime:
-    return _CLIRuntime(cfg, subtitle_sink=subtitle_sink, status_sink=status_sink)
+def _build_cli_runtime(
+    cfg, *, subtitle_sink, status_sink, stop_event=None
+) -> _CLIRuntime:
+    return _CLIRuntime(
+        cfg,
+        subtitle_sink=subtitle_sink,
+        status_sink=status_sink,
+        stop_event=stop_event,
+    )
 
 
 def build_cli_session(cfg, *, subtitle_sink, status_sink) -> SessionController:
@@ -214,10 +230,12 @@ def build_cli_session(cfg, *, subtitle_sink, status_sink) -> SessionController:
 
 
 def run_cli(cfg) -> SessionController:
+    stop_event = threading.Event()
     runtime = _build_cli_runtime(
         cfg,
         subtitle_sink=OBSWebSocketSubtitleAdapter(cfg),
-        status_sink=NullStatusSink(),
+        status_sink=_RuntimeStatusSink(stop_event),
+        stop_event=stop_event,
     )
     session = runtime.session
     session.start()
