@@ -154,3 +154,79 @@ def test_obs_script_stops_when_real_runtime_reports_async_capture_failure(
     assert FakeTextSink.instances[-1].clear_calls == 1
     assert obs_script._runtime is None
     assert obs_script._text_sink is None
+
+
+def test_startup_failure_branch_performs_full_cleanup(monkeypatch) -> None:
+    class FakeOBSModule:
+        OBS_TEXT_DEFAULT = 0
+
+        def __init__(self) -> None:
+            self.timer_add_calls = 0
+            self.timer_remove_calls = 0
+
+        def timer_add(self, callback, interval) -> None:
+            del callback, interval
+            self.timer_add_calls += 1
+
+        def timer_remove(self, callback) -> None:
+            del callback
+            self.timer_remove_calls += 1
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.status = RuntimeStatus(state=RuntimeState.STARTING)
+            self.stop_calls = 0
+
+        def start(self) -> None:
+            self.status = RuntimeStatus(state=RuntimeState.FAILED)
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    class FakeResultSink:
+        def __init__(self) -> None:
+            self.clear_calls = 0
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    class FakeStatusSink:
+        def poll_latest(self):
+            return None
+
+    class FakeTextSink:
+        instances = []
+
+        def __init__(self, obs_module, source_name: str) -> None:
+            del obs_module, source_name
+            self.clear_calls = 0
+            self.__class__.instances.append(self)
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    fake_obs = FakeOBSModule()
+    monkeypatch.setitem(sys.modules, "obspython", fake_obs)
+    monkeypatch.delitem(sys.modules, "obs_script", raising=False)
+    obs_script = importlib.import_module("obs_script")
+
+    session = FakeSession()
+    result_sink = FakeResultSink()
+    runtime = types.SimpleNamespace(
+        session=session,
+        result_sink=result_sink,
+        status_sink=FakeStatusSink(),
+    )
+
+    monkeypatch.setattr(obs_script, "build_obs_plugin_session", lambda cfg: runtime)
+    monkeypatch.setattr(obs_script, "OBSTextSourceSink", FakeTextSink)
+
+    obs_script._on_start_clicked(None, None)
+
+    assert session.stop_calls == 1
+    assert result_sink.clear_calls == 1
+    assert FakeTextSink.instances[-1].clear_calls == 1
+    assert fake_obs.timer_add_calls == 0
+    assert fake_obs.timer_remove_calls == 1
+    assert obs_script._runtime is None
+    assert obs_script._text_sink is None

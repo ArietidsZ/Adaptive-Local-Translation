@@ -136,9 +136,8 @@ def _on_start_clicked(props, prop):
     _runtime.session.start()
 
     if _runtime.session.status.state is RuntimeState.FAILED:
-        _runtime = None
-        _text_sink = None
         logger.error("Pipeline failed to start")
+        _stop_pipeline()
         return True
 
     obs.timer_add(_timer_tick, _UPDATE_INTERVAL_MS)
