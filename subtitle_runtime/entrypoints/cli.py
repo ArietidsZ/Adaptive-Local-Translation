@@ -223,7 +223,7 @@ def run_cli(cfg) -> SessionController:
     session.start()
 
     if session.status.state is RuntimeState.FAILED:
-        runtime.close()
+        runtime.shutdown()
         return session
 
     try:

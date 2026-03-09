@@ -258,7 +258,7 @@ def test_run_cli_exits_without_sleep_when_startup_fails(monkeypatch) -> None:
             raise RuntimeError("boom")
 
         def stop(self) -> None:
-            raise AssertionError("stop should not be called after failed startup")
+            sink.values.append("stopped")
 
     sink = FakeSink()
 
@@ -275,6 +275,56 @@ def test_run_cli_exits_without_sleep_when_startup_fails(monkeypatch) -> None:
     session = cli_module.run_cli(Config())
 
     assert session.status.state is RuntimeState.FAILED
+    assert sink.values == ["stopped"]
+    assert sink.cleared == 1
+    assert sink.closed == 1
+
+
+def test_run_cli_cleans_up_after_async_startup_failure(monkeypatch) -> None:
+    call_order = []
+    sink = FakeSink()
+
+    class FailingAudioCaptureAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def start(self, on_chunk, *, on_error=None) -> None:
+            del on_chunk
+            call_order.append("start")
+            on_error(RuntimeError("boom"))
+            call_order.append("after-error")
+
+        def stop(self) -> None:
+            call_order.append("stop")
+
+    class FakeVADAdapter:
+        def __init__(self, cfg) -> None:
+            del cfg
+
+        def process_chunk(self, chunk, on_speech) -> None:
+            del chunk, on_speech
+
+        def flush(self, on_speech) -> None:
+            del on_speech
+            call_order.append("flush")
+
+    monkeypatch.setattr(cli_module, "AudioCaptureAdapter", FailingAudioCaptureAdapter)
+    monkeypatch.setattr(cli_module, "VADAdapter", FakeVADAdapter)
+    monkeypatch.setattr(cli_module, "OBSWebSocketSubtitleAdapter", lambda cfg: sink)
+    monkeypatch.setattr(
+        cli_module.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(
+            AssertionError("run_cli slept after failure")
+        ),
+    )
+
+    session = cli_module.run_cli(Config())
+
+    assert session.status.state is RuntimeState.FAILED
+    assert call_order == ["start", "after-error", "stop"]
+    assert sink.cleared == 1
+    assert sink.closed == 1
 
 
 def test_run_cli_drains_buffered_audio_during_shutdown(monkeypatch) -> None:
