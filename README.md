@@ -56,8 +56,23 @@ python main.py
 
 ## 架构
 
+共享运行时逻辑已经收敛到 `subtitle_runtime/` 包，入口层只负责组装适配器：
+
 ```
-系统音频 → WASAPI Loopback → Silero VAD → Qwen3-ASR-0.6B → HY-MT1.5 翻译 → OBS 字幕
-                                                                                ↑
-                                                              模式A: WebSocket  |  模式B: obspython 直接更新
+subtitle_runtime/
+|- domain/        # RuntimeState / RuntimeStatus / SubtitleEvent
+|- application/   # session, speech_pipeline, audio_ingress, ports
+|- adapters/      # audio / vad / asr / translator / OBS sinks
+`- entrypoints/   # cli.py, obs_plugin.py
+
+main.py           # CLI 入口，走 WebSocket 推送字幕到 OBS
+obs_script.py     # OBS 脚本入口，直接通过 obspython 更新文本源
+pipeline.py       # 兼容旧调用路径的轻量包装
+engine.py         # 兼容旧运行时状态导入路径
+```
+
+数据流仍然保持不变：
+
+```
+系统音频 -> WASAPI Loopback -> Silero VAD -> Qwen3-ASR-0.6B -> HY-MT1.5 翻译 -> OBS 字幕
 ```
