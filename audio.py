@@ -30,14 +30,19 @@ class AudioCapture:
 
     # ── public API ─────────────────────────────────────────────────
 
-    def start(self, callback: Callable[[np.ndarray], None]) -> None:
+    def start(
+        self,
+        callback: Callable[[np.ndarray], None],
+        *,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> None:
         """Start capturing.  *callback* receives (N,) float32 arrays at 16 kHz."""
         if self._running:
             return
         self._running = True
         self._thread = threading.Thread(
             target=self._capture_loop,
-            args=(callback,),
+            args=(callback, on_error),
             daemon=True,
             name="audio-capture",
         )
@@ -51,7 +56,11 @@ class AudioCapture:
 
     # ── internals ──────────────────────────────────────────────────
 
-    def _capture_loop(self, callback: Callable[[np.ndarray], None]) -> None:
+    def _capture_loop(
+        self,
+        callback: Callable[[np.ndarray], None],
+        on_error: Callable[[Exception], None] | None,
+    ) -> None:
         import pyaudiowpatch as pyaudio  # Windows-only; imported here to fail fast
 
         pa = pyaudio.PyAudio()
@@ -94,9 +103,12 @@ class AudioCapture:
 
             stream.stop_stream()
             stream.close()
-        except Exception:
+        except Exception as error:
             logger.exception("Audio capture failed")
+            if on_error is not None:
+                on_error(error)
         finally:
+            self._running = False
             pa.terminate()
 
 

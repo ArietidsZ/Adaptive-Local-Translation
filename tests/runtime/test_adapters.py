@@ -41,3 +41,31 @@ def test_translator_adapter_forwards_language_arguments() -> None:
     value = adapter.translate("hello", source_lang="English", target_lang="zh")
 
     assert value == "English:zh:hello"
+
+
+def test_audio_capture_adapter_forwards_on_error_callback() -> None:
+    audio_capture_module = importlib.import_module(
+        "subtitle_runtime.adapters.audio_capture"
+    )
+    audio_capture_adapter = audio_capture_module.AudioCaptureAdapter
+    received = {}
+
+    class StubAudioCapture:
+        def __init__(self, cfg):
+            received["cfg"] = cfg
+
+        def start(self, on_chunk, *, on_error=None) -> None:
+            received["on_chunk"] = on_chunk
+            received["on_error"] = on_error
+
+        def stop(self) -> None:
+            received["stopped"] = True
+
+    callback = lambda chunk: chunk
+    on_error = lambda error: error
+    adapter = audio_capture_adapter(cfg=object(), factory=StubAudioCapture)
+
+    adapter.start(callback, on_error=on_error)
+
+    assert received["on_chunk"] is callback
+    assert received["on_error"] is on_error
