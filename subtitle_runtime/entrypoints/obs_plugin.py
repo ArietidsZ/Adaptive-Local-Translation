@@ -6,7 +6,7 @@ from typing import Any
 
 from subtitle_runtime.application.session import SessionController
 from subtitle_runtime.domain.events import RuntimeStatus, SubtitleEvent
-from subtitle_runtime.entrypoints.cli import NullStatusSink, build_cli_session
+from subtitle_runtime.entrypoints.cli import build_cli_session
 
 
 class ResultQueueSink:
@@ -53,14 +53,14 @@ class StatusQueueSink:
 class OBSPluginRuntime:
     session: SessionController
     result_sink: ResultQueueSink
-    status_sink: StatusQueueSink | NullStatusSink
+    status_sink: StatusQueueSink
 
 
 def build_obs_plugin_session(
     cfg: Any,
     *,
     result_sink: ResultQueueSink | None = None,
-    status_sink: StatusQueueSink | NullStatusSink | None = None,
+    status_sink: StatusQueueSink | None = None,
 ) -> OBSPluginRuntime:
     result_sink = result_sink or ResultQueueSink()
     status_sink = status_sink or StatusQueueSink()

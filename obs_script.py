@@ -175,6 +175,11 @@ def _timer_tick():
     if _runtime is None or _text_sink is None:
         return
 
+    status = _runtime.status_sink.poll_latest()
+    if status is not None and status.state is RuntimeState.FAILED:
+        _stop_pipeline()
+        return
+
     text = _runtime.result_sink.poll_latest()
     if text is not None:
         _text_sink.update(text)
