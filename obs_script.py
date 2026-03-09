@@ -154,17 +154,36 @@ def _stop_pipeline():
     global _runtime, _text_sink
     was_running = _runtime is not None or _text_sink is not None
     obs.timer_remove(_timer_tick)
+    first_error = None
+
     if _runtime is not None:
-        _runtime.session.stop()
-        _runtime.result_sink.clear()
+        try:
+            _runtime.session.stop()
+        except Exception as error:
+            first_error = error
+
+        try:
+            _runtime.result_sink.clear()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+
         _runtime = None
 
     if _text_sink is not None:
-        _text_sink.clear()
+        try:
+            _text_sink.clear()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+
         _text_sink = None
 
     if was_running:
         logger.info("Pipeline stopped")
+
+    if first_error is not None:
+        raise first_error
 
 
 # ── Timer tick (main OBS thread) ───────────────────────────────────

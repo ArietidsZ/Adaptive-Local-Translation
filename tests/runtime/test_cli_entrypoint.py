@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -542,5 +543,27 @@ def test_run_cli_stops_after_post_start_downstream_failure(monkeypatch) -> None:
     assert session.status.state is RuntimeState.FAILED
     assert sleep_calls == ["sleep"]
     assert sink.values == ["stopped"]
+    assert sink.cleared == 1
+    assert sink.closed == 1
+
+
+def test_cli_runtime_shutdown_cleans_up_sink_when_session_stop_raises() -> None:
+    sink = FakeSink()
+
+    class FailingSession:
+        def stop(self) -> None:
+            raise RuntimeError("stop failed")
+
+    runtime = cli_module._CLIRuntime(
+        Config(),
+        subtitle_sink=sink,
+        status_sink=FakeSink(),
+        stop_event=threading.Event(),
+    )
+    runtime.session = FailingSession()
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        runtime.shutdown()
+
     assert sink.cleared == 1
     assert sink.closed == 1

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -237,4 +238,50 @@ def test_session_ignores_late_async_error_after_stop() -> None:
         RuntimeState.RUNNING,
         RuntimeState.STOPPING,
         RuntimeState.STOPPED,
+    ]
+
+
+def test_session_stop_publishes_failed_status_when_audio_stop_raises() -> None:
+    class FailingStopAudioSource(FakeAudioSource):
+        def stop(self):
+            self.stopped = True
+            raise RuntimeError("stop failed")
+
+    audio_source = FailingStopAudioSource()
+    session, _, status_sink, _ = build_session(audio_source=audio_source)
+
+    session.start()
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        session.stop()
+
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+        RuntimeState.STOPPING,
+        RuntimeState.FAILED,
+    ]
+
+
+def test_session_stop_publishes_failed_status_when_flush_raises() -> None:
+    class FailingFlushSegmenter(FakeSegmenter):
+        def flush(self, on_speech):
+            del on_speech
+            self.flushed = True
+            raise RuntimeError("flush failed")
+
+    segmenter = FailingFlushSegmenter()
+    session, _, status_sink, _ = build_session(speech_segmenter=segmenter)
+
+    session.start()
+
+    with pytest.raises(RuntimeError, match="flush failed"):
+        session.stop()
+
+    assert segmenter.flushed is True
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+        RuntimeState.STOPPING,
+        RuntimeState.FAILED,
     ]

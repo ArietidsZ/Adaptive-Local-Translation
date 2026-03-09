@@ -230,3 +230,50 @@ def test_startup_failure_branch_performs_full_cleanup(monkeypatch) -> None:
     assert fake_obs.timer_remove_calls == 1
     assert obs_script._runtime is None
     assert obs_script._text_sink is None
+
+
+def test_stop_pipeline_clears_sinks_when_session_stop_raises(monkeypatch) -> None:
+    class FakeOBSModule:
+        OBS_TEXT_DEFAULT = 0
+
+        def timer_remove(self, callback) -> None:
+            del callback
+
+    class FailingSession:
+        def stop(self) -> None:
+            raise RuntimeError("stop failed")
+
+    class FakeResultSink:
+        def __init__(self) -> None:
+            self.clear_calls = 0
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    class FakeTextSink:
+        def __init__(self) -> None:
+            self.clear_calls = 0
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    monkeypatch.setitem(sys.modules, "obspython", FakeOBSModule())
+    monkeypatch.delitem(sys.modules, "obs_script", raising=False)
+    obs_script = importlib.import_module("obs_script")
+
+    result_sink = FakeResultSink()
+    text_sink = FakeTextSink()
+    obs_script._runtime = types.SimpleNamespace(
+        session=FailingSession(),
+        result_sink=result_sink,
+        status_sink=None,
+    )
+    obs_script._text_sink = text_sink
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        obs_script._stop_pipeline()
+
+    assert result_sink.clear_calls == 1
+    assert text_sink.clear_calls == 1
+    assert obs_script._runtime is None
+    assert obs_script._text_sink is None

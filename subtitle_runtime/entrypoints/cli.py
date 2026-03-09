@@ -198,9 +198,27 @@ class _CLIRuntime:
 
     def shutdown(self) -> None:
         self._stop_event.set()
-        self.session.stop()
-        self._subtitle_sink.clear()
-        self._subtitle_sink.close()
+        first_error = None
+
+        try:
+            self.session.stop()
+        except Exception as error:
+            first_error = error
+
+        try:
+            self._subtitle_sink.clear()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+
+        try:
+            self._subtitle_sink.close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+
+        if first_error is not None:
+            raise first_error
 
     def close(self) -> None:
         self._subtitle_sink.close()
