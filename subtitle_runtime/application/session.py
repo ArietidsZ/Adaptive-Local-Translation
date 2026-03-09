@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import threading
 
 from subtitle_runtime.application.ports import (
     AudioChunk,
@@ -30,6 +31,7 @@ class SessionController:
         self._status_sink = status_sink
         self._running = False
         self._stopped = False
+        self._status_lock = threading.Lock()
         self.status = RuntimeStatus(state=RuntimeState.STARTING)
 
     def start(self) -> None:
@@ -41,6 +43,10 @@ class SessionController:
         except Exception as error:
             self._handle_error(error)
             return
+
+        with self._status_lock:
+            if self.status.state is RuntimeState.FAILED:
+                return
 
         self._running = True
         self._publish_status(RuntimeState.RUNNING)
@@ -80,5 +86,6 @@ class SessionController:
         self._audio_source.start(self._handle_chunk)
 
     def _publish_status(self, state: RuntimeState) -> None:
-        self.status = RuntimeStatus(state=state)
-        self._status_sink.publish(self.status)
+        with self._status_lock:
+            self.status = RuntimeStatus(state=state)
+            self._status_sink.publish(self.status)

@@ -121,6 +121,28 @@ def test_session_publishes_failed_status_when_startup_raises() -> None:
     ]
 
 
+def test_session_does_not_publish_running_after_startup_async_failure() -> None:
+    class FailingDuringStartAudioSource:
+        def start(self, on_chunk, *, on_error=None):
+            del on_chunk
+            on_error(RuntimeError("boom"))
+
+        def stop(self):
+            return None
+
+    session, _, status_sink, _ = build_session(
+        audio_source=FailingDuringStartAudioSource()
+    )
+
+    session.start()
+
+    assert session.status.state is RuntimeState.FAILED
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.FAILED,
+    ]
+
+
 def test_session_publishes_pipeline_output_to_subtitle_sink() -> None:
     event = SubtitleEvent(
         source_text="hello",
