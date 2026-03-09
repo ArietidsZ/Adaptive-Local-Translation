@@ -174,7 +174,7 @@ def test_session_supports_legacy_audio_source_start_signature() -> None:
 def test_session_stop_stops_audio_source_and_flushes_segmenter() -> None:
     audio_source = FakeAudioSource()
     segmenter = FakeSegmenter()
-    session, _, _, _ = build_session(
+    session, _, status_sink, _ = build_session(
         audio_source=audio_source,
         speech_segmenter=segmenter,
     )
@@ -184,6 +184,12 @@ def test_session_stop_stops_audio_source_and_flushes_segmenter() -> None:
 
     assert audio_source.stopped is True
     assert segmenter.flushed is True
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+        RuntimeState.STOPPING,
+        RuntimeState.STOPPED,
+    ]
 
 
 def test_session_stop_cleans_up_after_async_error() -> None:
@@ -203,6 +209,21 @@ def test_session_stop_cleans_up_after_async_error() -> None:
     assert status_sink.values[-1].state is RuntimeState.FAILED
 
 
+def test_session_stop_preserves_failed_status_after_async_error() -> None:
+    audio_source = FakeAudioSource()
+    session, _, status_sink, _ = build_session(audio_source=audio_source)
+
+    session.start()
+    audio_source.on_error(RuntimeError("boom"))
+    session.stop()
+
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+        RuntimeState.FAILED,
+    ]
+
+
 def test_session_ignores_late_async_error_after_stop() -> None:
     audio_source = FakeAudioSource()
     session, _, status_sink, _ = build_session(audio_source=audio_source)
@@ -214,4 +235,6 @@ def test_session_ignores_late_async_error_after_stop() -> None:
     assert [status.state for status in status_sink.values] == [
         RuntimeState.STARTING,
         RuntimeState.RUNNING,
+        RuntimeState.STOPPING,
+        RuntimeState.STOPPED,
     ]

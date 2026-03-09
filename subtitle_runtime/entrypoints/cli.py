@@ -109,11 +109,13 @@ class _QueuedAudioSource:
         self._ingress = ingress
         self._drain_thread = None
         self._on_chunk = None
+        self._on_error = None
         self._stopping = False
         self._idle_wait = threading.Event()
 
     def start(self, on_chunk, *, on_error=None) -> None:
         self._on_chunk = on_chunk
+        self._on_error = on_error
         self._stopping = False
         self._idle_wait.clear()
         self._drain_thread = threading.Thread(
@@ -153,7 +155,16 @@ class _QueuedAudioSource:
                 continue
 
             if self._on_chunk is not None:
-                self._on_chunk(chunk)
+                try:
+                    self._on_chunk(chunk)
+                except Exception as error:
+                    self._stopping = True
+                    self._idle_wait.set()
+
+                    if self._on_error is not None:
+                        self._on_error(error)
+
+                    return
 
 
 class _CLIRuntime:

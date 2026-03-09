@@ -66,6 +66,7 @@ class SessionController:
 
             if self._lifecycle != "failed":
                 self._lifecycle = "stopping"
+                self._publish_status_locked(RuntimeState.STOPPING)
 
         try:
             self._audio_source.stop()
@@ -75,6 +76,7 @@ class SessionController:
             with self._status_lock:
                 if self._lifecycle != "failed":
                     self._lifecycle = "stopped"
+                    self._publish_status_locked(RuntimeState.STOPPED)
 
     def _handle_chunk(self, chunk: AudioChunk) -> None:
         self._speech_segmenter.process_chunk(chunk, self._handle_segment)
