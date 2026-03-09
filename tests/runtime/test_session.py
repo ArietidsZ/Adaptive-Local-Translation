@@ -201,3 +201,17 @@ def test_session_stop_cleans_up_after_async_error() -> None:
     assert audio_source.stopped is True
     assert segmenter.flushed is True
     assert status_sink.values[-1].state is RuntimeState.FAILED
+
+
+def test_session_ignores_late_async_error_after_stop() -> None:
+    audio_source = FakeAudioSource()
+    session, _, status_sink, _ = build_session(audio_source=audio_source)
+
+    session.start()
+    session.stop()
+    audio_source.on_error(RuntimeError("boom"))
+
+    assert [status.state for status in status_sink.values] == [
+        RuntimeState.STARTING,
+        RuntimeState.RUNNING,
+    ]

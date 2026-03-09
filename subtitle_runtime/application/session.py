@@ -31,12 +31,16 @@ class SessionController:
         self._status_sink = status_sink
         self._running = False
         self._stopped = False
-        self._status_lock = threading.Lock()
+        self._lifecycle = "idle"
+        self._status_lock = threading.RLock()
         self.status = RuntimeStatus(state=RuntimeState.STARTING)
 
     def start(self) -> None:
-        self._publish_status(RuntimeState.STARTING)
-        self._stopped = False
+        with self._status_lock:
+            self._running = False
+            self._stopped = False
+            self._lifecycle = "starting"
+            self._publish_status_locked(RuntimeState.STARTING)
 
         try:
             self._start_audio_source()
@@ -45,22 +49,32 @@ class SessionController:
             return
 
         with self._status_lock:
-            if self.status.state is RuntimeState.FAILED:
+            if self._lifecycle != "starting":
                 return
 
-        self._running = True
-        self._publish_status(RuntimeState.RUNNING)
+            self._running = True
+            self._lifecycle = "running"
+            self._publish_status_locked(RuntimeState.RUNNING)
 
     def stop(self) -> None:
-        if self._stopped:
-            return
+        with self._status_lock:
+            if self._stopped:
+                return
+
+            self._running = False
+            self._stopped = True
+
+            if self._lifecycle != "failed":
+                self._lifecycle = "stopping"
 
         try:
             self._audio_source.stop()
         finally:
             self._speech_segmenter.flush(self._handle_segment)
-            self._running = False
-            self._stopped = True
+
+            with self._status_lock:
+                if self._lifecycle != "failed":
+                    self._lifecycle = "stopped"
 
     def _handle_chunk(self, chunk: AudioChunk) -> None:
         self._speech_segmenter.process_chunk(chunk, self._handle_segment)
@@ -73,8 +87,14 @@ class SessionController:
 
     def _handle_error(self, error: Exception) -> None:
         del error
-        self._running = False
-        self._publish_status(RuntimeState.FAILED)
+
+        with self._status_lock:
+            if self._stopped or self._lifecycle == "failed":
+                return
+
+            self._running = False
+            self._lifecycle = "failed"
+            self._publish_status_locked(RuntimeState.FAILED)
 
     def _start_audio_source(self) -> None:
         parameters = inspect.signature(self._audio_source.start).parameters
@@ -87,5 +107,8 @@ class SessionController:
 
     def _publish_status(self, state: RuntimeState) -> None:
         with self._status_lock:
-            self.status = RuntimeStatus(state=state)
-            self._status_sink.publish(self.status)
+            self._publish_status_locked(state)
+
+    def _publish_status_locked(self, state: RuntimeState) -> None:
+        self.status = RuntimeStatus(state=state)
+        self._status_sink.publish(self.status)
