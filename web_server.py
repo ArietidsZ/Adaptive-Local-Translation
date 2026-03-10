@@ -26,10 +26,14 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
-from config import Config
-from subtitle_runtime.application.session import SessionController
-from subtitle_runtime.domain.events import RuntimeState, RuntimeStatus, SubtitleEvent
-from subtitle_runtime.entrypoints.cli import build_cli_session
+from config import Config  # noqa: E402
+from subtitle_runtime.application.session import SessionController  # noqa: E402
+from subtitle_runtime.domain.events import (  # noqa: E402
+    RuntimeState,
+    RuntimeStatus,
+    SubtitleEvent,
+)
+from subtitle_runtime.entrypoints.cli import build_cli_session  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +74,9 @@ class WebDashboard:
         self._clients: set[web.WebSocketResponse] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = web.Application()
+        self._app.router.add_get("/", self._index_handler)
         self._app.router.add_get("/ws", self._ws_handler)
-        self._app.router.add_static("/", WEB_DIR, show_index=True)
+        self._app.router.add_static("/", WEB_DIR, show_index=False)
 
     # ── aiohttp lifecycle ──────────────────────────────────────────
 
@@ -83,6 +88,9 @@ class WebDashboard:
         self._loop = asyncio.get_event_loop()
 
     # ── WebSocket handler ──────────────────────────────────────────
+
+    async def _index_handler(self, request: web.Request) -> web.FileResponse:
+        return web.FileResponse(WEB_DIR / "index.html")
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()

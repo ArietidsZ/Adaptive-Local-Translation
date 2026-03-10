@@ -15,9 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import web_server
-from subtitle_runtime.domain.events import RuntimeState, RuntimeStatus, SubtitleEvent
-from web_server import RuntimeStatusSink, RuntimeSubtitleSink, WebDashboard
+import web_server  # noqa: E402
+from subtitle_runtime.domain.events import (  # noqa: E402
+    RuntimeState,
+    RuntimeStatus,
+    SubtitleEvent,
+)
+from web_server import (  # noqa: E402
+    RuntimeStatusSink,
+    RuntimeSubtitleSink,
+    WebDashboard,
+)
 
 
 def run_frontend_scenario(script: str) -> dict:
@@ -90,7 +98,9 @@ def run_frontend_scenario(script: str) -> dict:
 
           querySelectorAll(selector) {{
             if (selector === '.subtitle-entry') {{
-              return this.children.filter((child) => child.className === 'subtitle-entry');
+              return this.children.filter(
+                (child) => child.className === 'subtitle-entry'
+              );
             }}
             return [];
           }}
@@ -407,6 +417,19 @@ async def test_websocket_start_flow_emits_runtime_status_and_results(
     }
 
     await ws.close()
+
+
+async def test_root_serves_dashboard_index_html(aiohttp_client) -> None:
+    dashboard = WebDashboard()
+
+    client = await aiohttp_client(dashboard._app)
+    response = await client.get("/")
+    body = await response.text()
+
+    assert response.status == 200
+    assert "<title>OBS Live Translator</title>" in body
+    assert 'id="connectionDot"' in body
+    assert 'src="/app.js"' in body
 
 
 def test_frontend_start_button_requires_open_websocket() -> None:
