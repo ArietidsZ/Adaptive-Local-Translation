@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>OBS Live Translator</title>
+  <meta name="description" content="Real-time audio transcription and translation dashboard for OBS Studio">
+  <link rel="stylesheet" href="/style.css">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="hsl(230, 15%, 8%)" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="hsl(0, 0%, 97%)" media="(prefers-color-scheme: light)">
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- ── Header ─────────────────────────────────────────────── -->
+    <header class="header">
+      <div>
+        <h1 class="header__title">Live Translator</h1>
+        <p class="header__subtitle">OBS Subtitle Engine</p>
+      </div>
+      <div class="header__actions">
+        <div class="connection-dot" id="connectionDot" data-state="disconnected" title="WebSocket disconnected"></div>
+        <button class="btn btn--ghost" id="btnSettings" style="flex:0;padding:10px 14px;" title="Settings" aria-label="Open settings">
+          <span class="btn__icon">⚙</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Status Card ────────────────────────────────────────── -->
+    <section class="card status-card" id="statusCard">
+      <div class="status-icon" id="statusIcon" data-state="stopped">
+        <span id="statusEmoji">⏸</span>
+      </div>
+      <div class="status-info">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="status-label" id="statusLabel">Stopped</span>
+          <span class="pill pill--idle" id="statusPill">
+            <span class="pill__dot"></span>
+            <span id="statusPillText">Idle</span>
+          </span>
+        </div>
+        <div class="status-detail" id="statusDetail">Waiting to start</div>
+      </div>
+    </section>
+
+    <!-- ── Controls ───────────────────────────────────────────── -->
+    <div class="controls">
+      <button class="btn btn--primary" id="btnStart">
+        <span class="btn__icon">▶</span>
+        Start
+      </button>
+      <button class="btn btn--danger" id="btnStop" disabled>
+        <span class="btn__icon">■</span>
+        Stop
+      </button>
+    </div>
+
+    <!-- ── Subtitle Feed ──────────────────────────────────────── -->
+    <section class="feed" id="feed">
+      <div class="feed__header">
+        <div>
+          <span class="feed__title">Subtitles</span>
+          <div class="feed__hint">Original, translation, source language, latency</div>
+        </div>
+        <button class="feed__clear" id="btnClear">Clear</button>
+      </div>
+
+      <ul class="feed__list" id="feedList">
+        <li class="feed__empty" id="feedEmpty">
+          <div class="feed__empty-icon">💬</div>
+          <div>Subtitles will appear here once the engine is running</div>
+        </li>
+      </ul>
+    </section>
+
+  </div>
+
+  <!-- ── Settings Sheet ─────────────────────────────────────── -->
+  <div class="sheet-backdrop" id="sheetBackdrop"></div>
+  <aside class="sheet" id="settingsSheet" role="dialog" aria-label="Settings">
+    <div class="sheet__handle"></div>
+    <h2 class="sheet__title">Settings</h2>
+
+    <form id="settingsForm" autocomplete="off">
+      <!-- ASR -->
+      <div class="form-group">
+        <label class="form-label" for="asrModel">ASR Model</label>
+        <input class="form-input" type="text" id="asrModel" placeholder="Qwen/Qwen3-ASR-0.6B">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="asrLanguage">Source Language</label>
+          <input class="form-input" type="text" id="asrLanguage" placeholder="Auto-detect">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="targetLang">Target Language</label>
+          <input class="form-input" type="text" id="targetLang" placeholder="zh">
+        </div>
+      </div>
+
+      <!-- Translation -->
+      <div class="form-group">
+        <label class="form-label" for="translationModel">Translation Model</label>
+        <input class="form-input" type="text" id="translationModel" placeholder="tencent/HY-MT1.5-1.8B-GPTQ-Int4">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="modelCacheDir">Model Cache Directory</label>
+        <input class="form-input" type="text" id="modelCacheDir" placeholder="Optional path">
+      </div>
+
+      <!-- Toggles -->
+      <div class="form-toggle">
+        <div>
+          <div class="form-toggle__label">Offline Mode</div>
+          <div class="form-toggle__description">Load models from local cache only</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="offlineOnly">
+          <span class="toggle__track"></span>
+          <span class="toggle__thumb"></span>
+        </label>
+      </div>
+
+      <div class="form-toggle">
+        <div>
+          <div class="form-toggle__label">Trust Remote Code</div>
+          <div class="form-toggle__description">Allow translation model remote code</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="trustRemoteCode" checked>
+          <span class="toggle__track"></span>
+          <span class="toggle__thumb"></span>
+        </label>
+      </div>
+
+      <div style="margin-top:var(--space-lg);">
+        <button class="btn btn--primary" type="submit" id="btnSaveSettings" style="width:100%;">Save Settings</button>
+      </div>
+    </form>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

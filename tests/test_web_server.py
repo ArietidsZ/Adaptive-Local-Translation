@@ -5,6 +5,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+pytest_plugins = ("aiohttp.pytest_plugin",)
+
 ROOT = Path(__file__).resolve().parents[1]
 
 if str(ROOT) not in sys.path:
@@ -41,6 +43,26 @@ class MutatingWebSocket:
         if self._remove_self:
             self._dashboard._clients.discard(self)
         await asyncio.sleep(0)
+
+
+class StreamingFakeSession(FakeSession):
+    def __init__(self, status: RuntimeStatus, *, subtitle_sink, status_sink) -> None:
+        super().__init__(status)
+        self._subtitle_sink = subtitle_sink
+        self._status_sink = status_sink
+
+    def start(self) -> None:
+        super().start()
+        self._status_sink.publish(RuntimeStatus(state=RuntimeState.STARTING))
+        self._status_sink.publish(RuntimeStatus(state=RuntimeState.RUNNING))
+        self._subtitle_sink.publish(
+            SubtitleEvent(
+                source_text="hello",
+                source_language="English",
+                translated_text="你好",
+                latency_ms=12.5,
+            )
+        )
 
 
 def test_status_sink_broadcasts_runtime_state() -> None:
@@ -159,3 +181,41 @@ def test_start_message_offloads_previous_session_stop(monkeypatch) -> None:
         assert dashboard._session is replacement_session
 
     asyncio.run(scenario())
+
+
+async def test_websocket_start_flow_emits_runtime_status_and_results(
+    aiohttp_client, monkeypatch
+) -> None:
+    dashboard = WebDashboard()
+    dashboard._loop = asyncio.get_running_loop()
+
+    def fake_build_cli_session(cfg, *, subtitle_sink, status_sink):
+        return StreamingFakeSession(
+            RuntimeStatus(state=RuntimeState.STOPPED),
+            subtitle_sink=subtitle_sink,
+            status_sink=status_sink,
+        )
+
+    monkeypatch.setattr(web_server, "build_cli_session", fake_build_cli_session)
+
+    client = await aiohttp_client(dashboard._app)
+    ws = await client.ws_connect("/ws")
+
+    await ws.send_json({"type": "start"})
+
+    received_status = await ws.receive_json(timeout=1)
+    received_running_status = await ws.receive_json(timeout=1)
+    received_result = await ws.receive_json(timeout=1)
+
+    assert received_status["type"] == "status"
+    assert received_status["state"] in {"starting", "running", "failed"}
+    assert received_running_status == {"type": "status", "state": "running"}
+    assert set(received_result) >= {
+        "type",
+        "original",
+        "translation",
+        "language",
+        "latency_ms",
+    }
+
+    await ws.close()
