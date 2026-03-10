@@ -139,6 +139,9 @@ class WebDashboard:
 
     # ── Session management ─────────────────────────────────────────
 
+    def _publish_stop_failure(self) -> None:
+        self._broadcast({"type": "status", "state": str(RuntimeState.FAILED)})
+
     async def _start_engine(self) -> None:
         if self._session is not None:
             status = self._session.status
@@ -146,11 +149,14 @@ class WebDashboard:
                 return
 
             old_session = self._session
-            self._session = None
             try:
                 await asyncio.to_thread(old_session.stop)
             except Exception:
                 logger.exception("Failed to stop previous session during restart")
+                self._publish_stop_failure()
+                return
+
+            self._session = None
 
         self._session = build_cli_session(
             self._cfg,
@@ -163,11 +169,14 @@ class WebDashboard:
     async def _stop_engine(self) -> None:
         if self._session is not None:
             session = self._session
-            self._session = None
             try:
                 await asyncio.to_thread(session.stop)
             except Exception:
                 logger.exception("Failed to stop session via web dashboard")
+                self._publish_stop_failure()
+                return
+
+            self._session = None
             logger.info("Session stopped via web dashboard")
 
     def _apply_config(self, msg: dict[str, Any]) -> None:

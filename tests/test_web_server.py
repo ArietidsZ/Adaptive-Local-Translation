@@ -387,36 +387,41 @@ def test_start_message_offloads_previous_session_stop(monkeypatch) -> None:
     asyncio.run(scenario())
 
 
-def test_stop_message_swallows_stop_failure_and_clears_session(monkeypatch) -> None:
+def test_stop_message_swallows_stop_failure_and_keeps_session(monkeypatch) -> None:
     async def scenario() -> None:
         dashboard = WebDashboard()
         session = FailingStopSession(RuntimeStatus(state=RuntimeState.RUNNING))
         dashboard._session = session
+        broadcasts = []
 
         async def fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
         monkeypatch.setattr(web_server.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(dashboard, "_broadcast", lambda msg: broadcasts.append(msg))
 
         await dashboard._handle_client_msg(object(), '{"type": "stop"}')
 
         assert session.stop_calls == 1
-        assert dashboard._session is None
+        assert dashboard._session is session
+        assert broadcasts == [{"type": "status", "state": "failed"}]
 
     asyncio.run(scenario())
 
 
-def test_start_message_recovers_from_previous_session_stop_failure(monkeypatch) -> None:
+def test_start_message_keeps_previous_session_when_stop_fails(monkeypatch) -> None:
     async def scenario() -> None:
         dashboard = WebDashboard()
         previous_session = FailingStopSession(RuntimeStatus(state=RuntimeState.STOPPED))
         replacement_session = FakeSession(RuntimeStatus(state=RuntimeState.STARTING))
         dashboard._session = previous_session
+        broadcasts = []
 
         async def fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
         monkeypatch.setattr(web_server.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(dashboard, "_broadcast", lambda msg: broadcasts.append(msg))
         monkeypatch.setattr(
             web_server,
             "build_cli_session",
@@ -426,8 +431,9 @@ def test_start_message_recovers_from_previous_session_stop_failure(monkeypatch) 
         await dashboard._handle_client_msg(object(), '{"type": "start"}')
 
         assert previous_session.stop_calls == 1
-        assert replacement_session.start_calls == 1
-        assert dashboard._session is replacement_session
+        assert replacement_session.start_calls == 0
+        assert dashboard._session is previous_session
+        assert broadcasts == [{"type": "status", "state": "failed"}]
 
     asyncio.run(scenario())
 
