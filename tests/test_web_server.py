@@ -263,6 +263,12 @@ class StreamingFakeSession(FakeSession):
         )
 
 
+class FailingStopSession(FakeSession):
+    def stop(self) -> None:
+        super().stop()
+        raise RuntimeError("stop failed")
+
+
 def test_status_sink_broadcasts_runtime_state() -> None:
     messages = []
     sink = RuntimeStatusSink(lambda msg: messages.append(msg))
@@ -374,6 +380,51 @@ def test_start_message_offloads_previous_session_stop(monkeypatch) -> None:
         assert len(to_thread_calls) == 1
         assert to_thread_calls[0][0].__self__ is previous_session
         assert to_thread_calls[0][0].__func__ is FakeSession.stop
+        assert previous_session.stop_calls == 1
+        assert replacement_session.start_calls == 1
+        assert dashboard._session is replacement_session
+
+    asyncio.run(scenario())
+
+
+def test_stop_message_swallows_stop_failure_and_clears_session(monkeypatch) -> None:
+    async def scenario() -> None:
+        dashboard = WebDashboard()
+        session = FailingStopSession(RuntimeStatus(state=RuntimeState.RUNNING))
+        dashboard._session = session
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(web_server.asyncio, "to_thread", fake_to_thread)
+
+        await dashboard._handle_client_msg(object(), '{"type": "stop"}')
+
+        assert session.stop_calls == 1
+        assert dashboard._session is None
+
+    asyncio.run(scenario())
+
+
+def test_start_message_recovers_from_previous_session_stop_failure(monkeypatch) -> None:
+    async def scenario() -> None:
+        dashboard = WebDashboard()
+        previous_session = FailingStopSession(RuntimeStatus(state=RuntimeState.STOPPED))
+        replacement_session = FakeSession(RuntimeStatus(state=RuntimeState.STARTING))
+        dashboard._session = previous_session
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(web_server.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(
+            web_server,
+            "build_cli_session",
+            lambda cfg, *, subtitle_sink, status_sink: replacement_session,
+        )
+
+        await dashboard._handle_client_msg(object(), '{"type": "start"}')
+
         assert previous_session.stop_calls == 1
         assert replacement_session.start_calls == 1
         assert dashboard._session is replacement_session
