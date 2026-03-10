@@ -86,7 +86,10 @@
   function send(type, payload = {}) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type, ...payload }));
+      return true;
     }
+
+    return false;
   }
 
   // ── Message Handler ───────────────────────────────────────────
@@ -228,11 +231,11 @@
   }
 
   function populateSettings(config) {
-    if (config.asr_model)          $('#asrModel').value = config.asr_model;
-    if (config.asr_language)       $('#asrLanguage').value = config.asr_language;
-    if (config.target_lang)        $('#targetLang').value = config.target_lang;
-    if (config.translation_model)  $('#translationModel').value = config.translation_model;
-    if (config.model_cache_dir)    $('#modelCacheDir').value = config.model_cache_dir;
+    $('#asrModel').value = config.asr_model ?? '';
+    $('#asrLanguage').value = config.asr_language ?? '';
+    $('#targetLang').value = config.target_lang ?? '';
+    $('#translationModel').value = config.translation_model ?? '';
+    $('#modelCacheDir').value = config.model_cache_dir ?? '';
     $('#offlineOnly').checked = !!config.offline_only;
     $('#trustRemoteCode').checked = config.trust_remote_code !== false;
   }
@@ -240,11 +243,11 @@
   function saveSettings(e) {
     e.preventDefault();
     send('config', {
-      asr_model: $('#asrModel').value || undefined,
-      asr_language: $('#asrLanguage').value || undefined,
-      target_lang: $('#targetLang').value || undefined,
-      translation_model: $('#translationModel').value || undefined,
-      model_cache_dir: $('#modelCacheDir').value || undefined,
+      asr_model: $('#asrModel').value,
+      asr_language: $('#asrLanguage').value,
+      target_lang: $('#targetLang').value,
+      translation_model: $('#translationModel').value,
+      model_cache_dir: $('#modelCacheDir').value,
       offline_only: $('#offlineOnly').checked,
       trust_remote_code: $('#trustRemoteCode').checked,
     });
@@ -262,13 +265,15 @@
   // ── Event Listeners ───────────────────────────────────────────
 
   btnStart.addEventListener('click', () => {
-    send('start');
-    updateEngineState('starting');
+    if (send('start')) {
+      updateEngineState('starting');
+    }
   });
 
   btnStop.addEventListener('click', () => {
-    send('stop');
-    updateEngineState('stopping');
+    if (send('stop')) {
+      updateEngineState('stopping');
+    }
   });
 
   btnSettings.addEventListener('click', openSettings);

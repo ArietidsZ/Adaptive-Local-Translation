@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +18,191 @@ if str(ROOT) not in sys.path:
 import web_server
 from subtitle_runtime.domain.events import RuntimeState, RuntimeStatus, SubtitleEvent
 from web_server import RuntimeStatusSink, RuntimeSubtitleSink, WebDashboard
+
+
+def run_frontend_scenario(script: str) -> dict:
+    app_source = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    node_script = textwrap.dedent(
+        f"""
+        const vm = require('node:vm');
+
+        class FakeClassList {{
+          constructor() {{
+            this._classes = new Set();
+          }}
+
+          add(...names) {{
+            for (const name of names) this._classes.add(name);
+          }}
+
+          remove(...names) {{
+            for (const name of names) this._classes.delete(name);
+          }}
+
+          contains(name) {{
+            return this._classes.has(name);
+          }}
+        }}
+
+        class FakeElement {{
+          constructor(id = '') {{
+            this.id = id;
+            this.textContent = '';
+            this.value = '';
+            this.checked = false;
+            this.disabled = false;
+            this.className = '';
+            this.style = {{}};
+            this.attributes = {{}};
+            this.listeners = {{}};
+            this.children = [];
+            this.classList = new FakeClassList();
+            this.innerHTML = '';
+          }}
+
+          setAttribute(name, value) {{
+            this.attributes[name] = String(value);
+          }}
+
+          getAttribute(name) {{
+            return this.attributes[name] ?? null;
+          }}
+
+          addEventListener(type, handler) {{
+            this.listeners[type] = handler;
+          }}
+
+          dispatchEvent(event) {{
+            const enriched = {{
+              preventDefault() {{}},
+              ...event,
+              target: event.target ?? this,
+              currentTarget: this,
+            }};
+            const handler = this.listeners[enriched.type];
+            if (handler) handler(enriched);
+          }}
+
+          appendChild(child) {{
+            this.children.push(child);
+            return child;
+          }}
+
+          querySelectorAll(selector) {{
+            if (selector === '.subtitle-entry') {{
+              return this.children.filter((child) => child.className === 'subtitle-entry');
+            }}
+            return [];
+          }}
+
+          querySelector(selector) {{
+            return this.querySelectorAll(selector)[0] ?? null;
+          }}
+
+          scrollTo() {{}}
+
+          remove() {{
+            this.removed = true;
+          }}
+        }}
+
+        class FakeWebSocket {{
+          constructor(url) {{
+            this.url = url;
+            this.readyState = FakeWebSocket.initialReadyState;
+            this.sent = [];
+            FakeWebSocket.instance = this;
+          }}
+
+          send(payload) {{
+            this.sent.push(JSON.parse(payload));
+          }}
+
+          close() {{
+            this.readyState = FakeWebSocket.CLOSED;
+            if (this.onclose) this.onclose();
+          }}
+        }}
+
+        FakeWebSocket.CONNECTING = 0;
+        FakeWebSocket.OPEN = 1;
+        FakeWebSocket.CLOSED = 3;
+        FakeWebSocket.initialReadyState = FakeWebSocket.CONNECTING;
+        FakeWebSocket.instance = null;
+
+        const elements = {{
+          '#connectionDot': new FakeElement('connectionDot'),
+          '#statusIcon': new FakeElement('statusIcon'),
+          '#statusEmoji': new FakeElement('statusEmoji'),
+          '#statusLabel': new FakeElement('statusLabel'),
+          '#statusPill': new FakeElement('statusPill'),
+          '#statusPillText': new FakeElement('statusPillText'),
+          '#statusDetail': new FakeElement('statusDetail'),
+          '#btnStart': new FakeElement('btnStart'),
+          '#btnStop': new FakeElement('btnStop'),
+          '#btnSettings': new FakeElement('btnSettings'),
+          '#btnClear': new FakeElement('btnClear'),
+          '#btnSaveSettings': new FakeElement('btnSaveSettings'),
+          '#feedList': new FakeElement('feedList'),
+          '#feedEmpty': new FakeElement('feedEmpty'),
+          '#settingsSheet': new FakeElement('settingsSheet'),
+          '#sheetBackdrop': new FakeElement('sheetBackdrop'),
+          '#settingsForm': new FakeElement('settingsForm'),
+          '#asrModel': new FakeElement('asrModel'),
+          '#asrLanguage': new FakeElement('asrLanguage'),
+          '#targetLang': new FakeElement('targetLang'),
+          '#translationModel': new FakeElement('translationModel'),
+          '#modelCacheDir': new FakeElement('modelCacheDir'),
+          '#offlineOnly': new FakeElement('offlineOnly'),
+          '#trustRemoteCode': new FakeElement('trustRemoteCode'),
+        }};
+
+        const documentListeners = {{}};
+        const document = {{
+          querySelector(selector) {{
+            return elements[selector] ?? null;
+          }},
+          createElement() {{
+            return new FakeElement();
+          }},
+          addEventListener(type, handler) {{
+            documentListeners[type] = handler;
+          }},
+          body: new FakeElement('body'),
+        }};
+
+        const context = {{
+          console,
+          document,
+          window: null,
+          location: {{ protocol: 'http:', host: 'example.test' }},
+          WebSocket: FakeWebSocket,
+          setTimeout(fn) {{ return 1; }},
+          clearTimeout() {{}},
+          requestAnimationFrame(fn) {{ fn(); }},
+          Date,
+          JSON,
+        }};
+        context.window = context;
+
+        vm.runInNewContext({json.dumps(app_source)}, context, {{ filename: 'app.js' }});
+
+        const runScenario = () => {{
+        {textwrap.indent(script, "  ")}
+        }};
+
+        const result = runScenario();
+        process.stdout.write(JSON.stringify(result));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", node_script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(completed.stdout)
 
 
 @dataclass
@@ -219,3 +407,84 @@ async def test_websocket_start_flow_emits_runtime_status_and_results(
     }
 
     await ws.close()
+
+
+def test_frontend_start_button_requires_open_websocket() -> None:
+    result = run_frontend_scenario(
+        """
+        elements['#statusLabel'].textContent = 'Stopped';
+        elements['#statusDetail'].textContent = 'Waiting to start';
+        elements['#statusIcon'].setAttribute('data-state', 'stopped');
+        elements['#btnStart'].dispatchEvent({ type: 'click' });
+        return {
+          statusLabel: elements['#statusLabel'].textContent,
+          statusDetail: elements['#statusDetail'].textContent,
+          statusState: elements['#statusIcon'].getAttribute('data-state'),
+          sent: FakeWebSocket.instance.sent,
+        };
+        """
+    )
+
+    assert result == {
+        "statusLabel": "Stopped",
+        "statusDetail": "Waiting to start",
+        "statusState": "stopped",
+        "sent": [],
+    }
+
+
+def test_frontend_populates_empty_optional_settings_from_backend() -> None:
+    result = run_frontend_scenario(
+        """
+        FakeWebSocket.initialReadyState = FakeWebSocket.OPEN;
+        FakeWebSocket.instance.readyState = FakeWebSocket.OPEN;
+        elements['#asrLanguage'].value = 'English';
+        elements['#modelCacheDir'].value = '/tmp/models';
+        FakeWebSocket.instance.onmessage({
+          data: JSON.stringify({
+            type: 'config',
+            asr_model: 'Qwen/Qwen3-ASR-0.6B',
+            asr_language: '',
+            target_lang: 'zh',
+            translation_model: 'tencent/HY-MT1.5-1.8B-GPTQ-Int4',
+            model_cache_dir: '',
+            offline_only: false,
+            trust_remote_code: true,
+          }),
+        });
+        return {
+          asrLanguage: elements['#asrLanguage'].value,
+          modelCacheDir: elements['#modelCacheDir'].value,
+        };
+        """
+    )
+
+    assert result == {"asrLanguage": "", "modelCacheDir": ""}
+
+
+def test_frontend_preserves_empty_optional_settings_when_saving() -> None:
+    result = run_frontend_scenario(
+        """
+        FakeWebSocket.instance.readyState = FakeWebSocket.OPEN;
+        elements['#asrModel'].value = 'Qwen/Qwen3-ASR-0.6B';
+        elements['#asrLanguage'].value = '';
+        elements['#targetLang'].value = 'zh';
+        elements['#translationModel'].value = 'tencent/HY-MT1.5-1.8B-GPTQ-Int4';
+        elements['#modelCacheDir'].value = '';
+        elements['#offlineOnly'].checked = false;
+        elements['#trustRemoteCode'].checked = true;
+        elements['#settingsForm'].dispatchEvent({ type: 'submit' });
+        return FakeWebSocket.instance.sent[0];
+        """
+    )
+
+    assert result == {
+        "type": "config",
+        "asr_model": "Qwen/Qwen3-ASR-0.6B",
+        "asr_language": "",
+        "target_lang": "zh",
+        "translation_model": "tencent/HY-MT1.5-1.8B-GPTQ-Int4",
+        "model_cache_dir": "",
+        "offline_only": False,
+        "trust_remote_code": True,
+    }
