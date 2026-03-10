@@ -28,6 +28,7 @@
   // ── State ─────────────────────────────────────────────────────
   let ws = null;
   let reconnectTimer = null;
+  let clearFeedPlaceholderTimer = null;
   let engineState = 'stopped';
   const RECONNECT_DELAY = 2000;
   const MAX_FEED_ITEMS = 100;
@@ -165,6 +166,9 @@
   // ── Subtitle Feed ─────────────────────────────────────────────
 
   function addSubtitleEntry({ original, translation, language, latencyMs }) {
+    clearTimeout(clearFeedPlaceholderTimer);
+    clearFeedPlaceholderTimer = null;
+
     // Remove empty placeholder
     if (feedEmpty) {
       feedEmpty.style.display = 'none';
@@ -209,8 +213,12 @@
       el.style.transform = 'scale(0.95)';
       setTimeout(() => el.remove(), 160);
     });
-    setTimeout(() => {
-      if (feedEmpty) feedEmpty.style.display = '';
+    clearTimeout(clearFeedPlaceholderTimer);
+    clearFeedPlaceholderTimer = setTimeout(() => {
+      clearFeedPlaceholderTimer = null;
+      if (feedEmpty && !feedList.querySelector('.subtitle-entry')) {
+        feedEmpty.style.display = '';
+      }
     }, 200);
   }
 

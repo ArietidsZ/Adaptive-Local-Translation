@@ -140,6 +140,8 @@ def run_frontend_scenario(script: str) -> dict:
         FakeWebSocket.initialReadyState = FakeWebSocket.CONNECTING;
         FakeWebSocket.instance = null;
 
+        const scheduledTimeouts = [];
+
         const elements = {{
           '#connectionDot': new FakeElement('connectionDot'),
           '#statusIcon': new FakeElement('statusIcon'),
@@ -187,13 +189,28 @@ def run_frontend_scenario(script: str) -> dict:
           window: null,
           location: {{ protocol: 'http:', host: 'example.test' }},
           WebSocket: FakeWebSocket,
-          setTimeout(fn) {{ return 1; }},
-          clearTimeout() {{}},
+          setTimeout(fn, delay) {{
+            const handle = {{ fn, delay, cleared: false }};
+            scheduledTimeouts.push(handle);
+            return handle;
+          }},
+          clearTimeout(handle) {{
+            if (handle) handle.cleared = true;
+          }},
           requestAnimationFrame(fn) {{ fn(); }},
           Date,
           JSON,
         }};
         context.window = context;
+        context.runScheduledTimeouts = (delay = null) => {{
+          for (const timeout of scheduledTimeouts) {{
+            if (!timeout.cleared && (delay === null || timeout.delay === delay)) {{
+              timeout.cleared = true;
+              timeout.fn();
+            }}
+          }}
+        }};
+        const runScheduledTimeouts = context.runScheduledTimeouts;
 
         vm.runInNewContext({json.dumps(app_source)}, context, {{ filename: 'app.js' }});
 
@@ -568,3 +585,35 @@ def test_frontend_preserves_empty_optional_settings_when_saving() -> None:
         "offline_only": False,
         "trust_remote_code": True,
     }
+
+
+def test_frontend_clear_feed_does_not_restore_placeholder_after_new_result() -> None:
+    result = run_frontend_scenario(
+        """
+        const existing = document.createElement('li');
+        existing.className = 'subtitle-entry';
+        elements['#feedList'].appendChild(existing);
+        elements['#feedEmpty'].style.display = 'none';
+
+        elements['#btnClear'].dispatchEvent({ type: 'click' });
+
+        FakeWebSocket.instance.onmessage({
+          data: JSON.stringify({
+            type: 'result',
+            original: 'hello',
+            translation: '你好',
+            language: 'English',
+            latency_ms: 12.5,
+          }),
+        });
+
+        runScheduledTimeouts(200);
+
+        return {
+          placeholderDisplay: elements['#feedEmpty'].style.display,
+          subtitleCount: elements['#feedList'].querySelectorAll('.subtitle-entry').length,
+        };
+        """
+    )
+
+    assert result == {"placeholderDisplay": "none", "subtitleCount": 2}
