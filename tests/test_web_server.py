@@ -611,7 +611,8 @@ def test_frontend_clear_feed_does_not_restore_placeholder_after_new_result() -> 
 
         return {
           placeholderDisplay: elements['#feedEmpty'].style.display,
-          subtitleCount: elements['#feedList'].querySelectorAll('.subtitle-entry').length,
+          subtitleCount:
+            elements['#feedList'].querySelectorAll('.subtitle-entry').length,
         };
         """
     )
