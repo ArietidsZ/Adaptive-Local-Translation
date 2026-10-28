@@ -10,6 +10,11 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class Config:
+    # Model loading policy (shared by dashboard and loaders).
+    model_cache_dir: str | None = None
+    offline_only: bool = False
+    translation_trust_remote_code: bool = False
+
     # ── Audio capture ──────────────────────────────────────────────
     audio_device_index: int | None = None  # None = auto-detect default output
     sample_rate: int = 16_000  # internal processing rate

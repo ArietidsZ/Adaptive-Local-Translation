@@ -11,6 +11,8 @@ import numpy as np
 import torch
 from qwen_asr import Qwen3ASRModel
 
+from model_loading import resolve_model_directory
+
 if TYPE_CHECKING:
     from config import Config
 
@@ -129,7 +131,8 @@ class ASR:
             dtype,
         )
         self._model = Qwen3ASRModel.from_pretrained(
-            cfg.asr_model,
+            resolve_model_directory(cfg.asr_model, cfg),
+            local_files_only=True,
             dtype=dtype,
             device_map=device_map,
             max_new_tokens=cfg.asr_max_new_tokens,
