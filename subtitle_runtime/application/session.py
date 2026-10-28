@@ -31,14 +31,23 @@ class SessionController:
         self._status_sink = status_sink
         self._running = False
         self._stopped = False
+        self._stop_in_progress = False
+        self._audio_stopped = False
+        self._flushed = False
         self._lifecycle = "idle"
         self._status_lock = threading.RLock()
         self.status = RuntimeStatus(state=RuntimeState.STARTING)
 
     def start(self) -> None:
         with self._status_lock:
+            if self._stop_in_progress or (
+                self._lifecycle != "idle" and not self._stopped
+            ):
+                raise RuntimeError("Previous session must finish shutdown before start")
             self._running = False
             self._stopped = False
+            self._audio_stopped = False
+            self._flushed = False
             self._lifecycle = "starting"
             self._publish_status_locked(RuntimeState.STARTING)
 
@@ -57,45 +66,50 @@ class SessionController:
             self._publish_status_locked(RuntimeState.RUNNING)
 
     def stop(self) -> None:
+        notification = None
         with self._status_lock:
             if self._stopped:
                 return
-
+            if self._stop_in_progress:
+                raise RuntimeError("Session shutdown already in progress")
+            self._stop_in_progress = True
             self._running = False
-            self._stopped = True
-
             if self._lifecycle != "failed":
                 self._lifecycle = "stopping"
-                self._publish_status_locked(RuntimeState.STOPPING)
-
-        stop_error: Exception | None = None
-
-        try:
-            self._audio_source.stop()
-        except Exception as error:
-            stop_error = error
+                self.status = RuntimeStatus(state=RuntimeState.STOPPING)
+                notification = self.status
 
         try:
-            self._speech_segmenter.flush(self._handle_segment)
-        except Exception as error:
-            if stop_error is None:
-                stop_error = error
-        finally:
-            next_state = None
-
+            # Never hold the status lock while callbacks run or workers join.
+            if notification is not None:
+                self._status_sink.publish(notification)
+            if not self._audio_stopped:
+                self._audio_source.stop()
+                self._audio_stopped = True
+            if not self._flushed:
+                self._speech_segmenter.flush(self._handle_segment)
+                self._flushed = True
+            notification = None
             with self._status_lock:
+                self._stopped = True
                 if self._lifecycle != "failed":
-                    if stop_error is None:
-                        self._lifecycle = "stopped"
-                        next_state = RuntimeState.STOPPED
-                    else:
-                        self._lifecycle = "failed"
-                        next_state = RuntimeState.FAILED
-
-                    self._publish_status_locked(next_state)
-
-        if stop_error is not None:
-            raise stop_error
+                    self._lifecycle = "stopped"
+                    self.status = RuntimeStatus(state=RuntimeState.STOPPED)
+                    notification = self.status
+            if notification is not None:
+                self._status_sink.publish(notification)
+        except BaseException:
+            with self._status_lock:
+                self._lifecycle = "failed"
+                self.status = RuntimeStatus(state=RuntimeState.FAILED)
+            try:
+                self._status_sink.publish(self.status)
+            except Exception:
+                pass  # Preserve the original cleanup/observer failure.
+            raise
+        finally:
+            with self._status_lock:
+                self._stop_in_progress = False
 
     def _handle_chunk(self, chunk: AudioChunk) -> None:
         self._speech_segmenter.process_chunk(chunk, self._handle_segment)

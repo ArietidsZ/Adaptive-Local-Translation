@@ -112,11 +112,15 @@ class _QueuedAudioSource:
         self._on_error = None
         self._stopping = False
         self._idle_wait = threading.Event()
+        self._ingress_lock = threading.Lock()
+        self._accepting = False
 
     def start(self, on_chunk, *, on_error=None) -> None:
         self._on_chunk = on_chunk
         self._on_error = on_error
         self._stopping = False
+        with self._ingress_lock:
+            self._accepting = True
         self._idle_wait.clear()
         self._drain_thread = threading.Thread(
             target=self._drain_loop,
@@ -126,22 +130,48 @@ class _QueuedAudioSource:
         self._drain_thread.start()
 
         try:
-            self._audio_source.start(self._ingress.push, on_error=on_error)
+            self._audio_source.start(self._push_chunk, on_error=on_error)
         except Exception:
+            with self._ingress_lock:
+                self._accepting = False
             self._stopping = True
             self._idle_wait.set()
             self._drain_thread.join()
             self._drain_thread = None
             raise
 
-    def stop(self) -> None:
-        self._audio_source.stop()
-        self._stopping = True
-        self._idle_wait.set()
+    def _push_chunk(self, chunk) -> None:
+        with self._ingress_lock:
+            if self._accepting:
+                self._ingress.push(chunk)
 
-        if self._drain_thread is not None:
-            self._drain_thread.join()
-            self._drain_thread = None
+    def stop(self) -> None:
+        capture_error = None
+        try:
+            # Capture may synchronously emit its final chunk during stop.
+            self._audio_source.stop()
+        except Exception as error:
+            capture_error = error
+        finally:
+            with self._ingress_lock:
+                self._accepting = False
+            self._stopping = True
+            self._idle_wait.set()
+
+        if self._drain_thread is threading.current_thread():
+            if capture_error is not None:
+                raise capture_error
+            raise RuntimeError("Audio drain shutdown needs an external join")
+        try:
+            if self._drain_thread is not None:
+                self._drain_thread.join()
+                self._drain_thread = None
+        except Exception:
+            if capture_error is not None:
+                raise capture_error
+            raise
+        if capture_error is not None:
+            raise capture_error
 
     def _drain_loop(self) -> None:
         while True:
@@ -158,6 +188,8 @@ class _QueuedAudioSource:
                 try:
                     self._on_chunk(chunk)
                 except Exception as error:
+                    with self._ingress_lock:
+                        self._accepting = False
                     self._stopping = True
                     self._idle_wait.set()
 
