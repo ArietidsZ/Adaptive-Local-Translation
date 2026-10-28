@@ -192,6 +192,7 @@ class WebDashboard:
             "translation_model": "translation_model",
             "target_lang": "translation_target_lang",
             "model_cache_dir": "model_cache_dir", "offline_only": "offline_only",
+            "vad_model_path": "vad_model_path",
             "trust_remote_code": "translation_trust_remote_code",
         }
         changes = {}
@@ -202,7 +203,7 @@ class WebDashboard:
             if key in {"offline_only", "trust_remote_code"}:
                 if type(value) is not bool:
                     raise ValueError(f"{key} must be a boolean")
-            elif key in {"asr_language", "model_cache_dir"}:
+            elif key in {"asr_language", "model_cache_dir", "vad_model_path"}:
                 if value is not None and not isinstance(value, str):
                     raise ValueError(f"{key} must be a string or null")
                 value = value.strip() or None if isinstance(value, str) else None
@@ -223,6 +224,7 @@ class WebDashboard:
             "target_lang": self._cfg.translation_target_lang,
             "translation_model": self._cfg.translation_model,
             "model_cache_dir": self._cfg.model_cache_dir or "",
+            "vad_model_path": self._cfg.vad_model_path or "",
             "offline_only": self._cfg.offline_only,
             "trust_remote_code": self._cfg.translation_trust_remote_code,
         }

@@ -145,3 +145,43 @@ def test_asr_passes_resolved_local_path_to_qwen(monkeypatch):
     module.ASR(Config(offline_only=True))
     assert calls[0][0] == ("/cached/asr",)
     assert calls[0][1]["local_files_only"] is True
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_offline_vad_never_calls_torch_hub(tmp_path, monkeypatch, cached):
+    import importlib.util
+    from pathlib import Path
+
+    calls = []
+
+    def online(*args, **kwargs):
+        raise AssertionError("offline VAD attempted network-capable hub loading")
+
+    def local(path, **kwargs):
+        calls.append((path, kwargs))
+        return SimpleNamespace(eval=lambda: None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            hub=SimpleNamespace(load=online, get_dir=lambda: str(tmp_path)),
+            jit=SimpleNamespace(load=local),
+        ),
+    )
+    model_path = tmp_path / "silero_vad.jit"
+    if cached:
+        model_path.write_bytes(b"fake-not-executed")
+    spec = importlib.util.spec_from_file_location(
+        "isolated_vad", Path(__file__).parents[1] / "vad.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cfg = Config(offline_only=True, vad_model_path=str(model_path))
+    if cached:
+        module.VAD(cfg)
+        assert calls == [(str(model_path), {"map_location": "cpu"})]
+    else:
+        with pytest.raises(FileNotFoundError, match="Silero"):
+            module.VAD(cfg)
+        assert calls == []

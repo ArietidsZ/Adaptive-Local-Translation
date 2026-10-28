@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -29,9 +30,22 @@ class VAD:
 
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
-        self._model, _ = torch.hub.load(
-            "snakers4/silero-vad", "silero_vad", trust_repo=True
-        )
+        if cfg.offline_only or cfg.vad_model_path:
+            model_path = (
+                Path(cfg.vad_model_path).expanduser() if cfg.vad_model_path else
+                Path(torch.hub.get_dir()) / "snakers4_silero-vad_master" /
+                "src" / "silero_vad" / "data" / "silero_vad.jit"
+            )
+            if not model_path.is_file():
+                raise FileNotFoundError(
+                    "Local Silero VAD model missing; set vad_model_path to a "
+                    "trusted silero_vad.jit file before offline startup"
+                )
+            self._model = torch.jit.load(str(model_path), map_location="cpu")
+        else:
+            self._model, _ = torch.hub.load(
+                "snakers4/silero-vad", "silero_vad", trust_repo=True
+            )
         self._model.eval()
 
         self._frame_samples = _SILERO_FRAME_SAMPLES

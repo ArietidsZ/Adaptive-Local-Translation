@@ -100,3 +100,9 @@ mode the snapshot must already exist, or loading fails without an online retry.
 Both translation tokenizer and model receive the same cache/offline/trust options.
 Online first load can download model files; the offline tests do not download or
 execute models and are not GPU, audio-device, or OBS acceptance evidence.
+
+Offline startup also bypasses Torch Hub's network path for VAD: it loads a trusted
+local `silero_vad.jit` directly (dashboard `vad_model_path`), or the existing
+standard Torch Hub cache path. If absent, startup fails instead of fetching it.
+The Hugging Face cache directory does not relocate the Torch Hub cache. Online
+VAD loading retains the existing Torch Hub behavior; no weights are bundled.

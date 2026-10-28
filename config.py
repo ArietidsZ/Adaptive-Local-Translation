@@ -12,6 +12,7 @@ from dataclasses import dataclass
 class Config:
     # Model loading policy (shared by dashboard and loaders).
     model_cache_dir: str | None = None
+    vad_model_path: str | None = None  # trusted local Silero TorchScript file
     offline_only: bool = False
     translation_trust_remote_code: bool = False
 
