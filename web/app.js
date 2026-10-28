@@ -244,6 +244,7 @@
     $('#targetLang').value = config.target_lang ?? '';
     $('#translationModel').value = config.translation_model ?? '';
     $('#modelCacheDir').value = config.model_cache_dir ?? '';
+    $('#vadModelPath').value = config.vad_model_path ?? '';
     $('#offlineOnly').checked = !!config.offline_only;
     $('#trustRemoteCode').checked = config.trust_remote_code !== false;
   }
@@ -256,6 +257,7 @@
       target_lang: $('#targetLang').value,
       translation_model: $('#translationModel').value,
       model_cache_dir: $('#modelCacheDir').value,
+      vad_model_path: $('#vadModelPath').value,
       offline_only: $('#offlineOnly').checked,
       trust_remote_code: $('#trustRemoteCode').checked,
     });

@@ -46,12 +46,17 @@ class Translator:
         logger.info("Loading translation model %s …", cfg.translation_model)
 
         self._tokenizer = AutoTokenizer.from_pretrained(
-            cfg.translation_model, trust_remote_code=True
+            cfg.translation_model,
+            trust_remote_code=cfg.translation_trust_remote_code,
+            cache_dir=cfg.model_cache_dir,
+            local_files_only=cfg.offline_only
         )
         self._model = AutoModelForCausalLM.from_pretrained(
             cfg.translation_model,
             device_map=cfg.translation_device,
-            trust_remote_code=True,
+            trust_remote_code=cfg.translation_trust_remote_code,
+            cache_dir=cfg.model_cache_dir,
+            local_files_only=cfg.offline_only,
         )
         self._model.eval()
 

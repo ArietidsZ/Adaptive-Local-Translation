@@ -165,6 +165,7 @@ def run_frontend_scenario(script: str) -> dict:
           '#targetLang': new FakeElement('targetLang'),
           '#translationModel': new FakeElement('translationModel'),
           '#modelCacheDir': new FakeElement('modelCacheDir'),
+          '#vadModelPath': new FakeElement('vadModelPath'),
           '#offlineOnly': new FakeElement('offlineOnly'),
           '#trustRemoteCode': new FakeElement('trustRemoteCode'),
         }};
@@ -582,6 +583,7 @@ def test_frontend_preserves_empty_optional_settings_when_saving() -> None:
         "target_lang": "zh",
         "translation_model": "tencent/HY-MT1.5-1.8B-GPTQ-Int4",
         "model_cache_dir": "",
+        "vad_model_path": "",
         "offline_only": False,
         "trust_remote_code": True,
     }

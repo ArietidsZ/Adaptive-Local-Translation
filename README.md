@@ -86,3 +86,23 @@ engine.py         # 兼容旧运行时状态导入路径
 ```
 系统音频 -> WASAPI Loopback -> Silero VAD -> Qwen3-ASR-0.6B -> HY-MT1.5 翻译 -> OBS 字幕
 ```
+
+### Model-loading settings
+
+The dashboard and Python `Config` share `model_cache_dir`, `offline_only`, and
+`translation_trust_remote_code`. Partial dashboard updates preserve audio/OBS
+settings. Invalid setting types are rejected without replacing the configuration.
+Remote model code is disabled by default; enable it only for code you have reviewed.
+
+Qwen ASR resolves a complete Hugging Face snapshot before loading because its
+0.0.6 wrapper does not forward cache/offline arguments to the processor. In offline
+mode the snapshot must already exist, or loading fails without an online retry.
+Both translation tokenizer and model receive the same cache/offline/trust options.
+Online first load can download model files; the offline tests do not download or
+execute models and are not GPU, audio-device, or OBS acceptance evidence.
+
+Offline startup also bypasses Torch Hub's network path for VAD: it loads a trusted
+local `silero_vad.jit` directly (dashboard `vad_model_path`), or the existing
+standard Torch Hub cache path. If absent, startup fails instead of fetching it.
+The Hugging Face cache directory does not relocate the Torch Hub cache. Online
+VAD loading retains the existing Torch Hub behavior; no weights are bundled.
