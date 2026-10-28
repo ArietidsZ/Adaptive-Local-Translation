@@ -620,3 +620,43 @@ def test_frontend_clear_feed_does_not_restore_placeholder_after_new_result() -> 
     )
 
     assert result == {"placeholderDisplay": "none", "subtitleCount": 2}
+
+
+async def test_websocket_rejects_cross_origin_before_connection(aiohttp_client):
+    from aiohttp import WSServerHandshakeError
+    import pytest
+    dashboard = WebDashboard()
+    client = await aiohttp_client(dashboard._app)
+    for origin in ['https://evil.example', 'null', 'http://127.0.0.1:1']:
+        with pytest.raises(WSServerHandshakeError) as error:
+            await client.ws_connect('/ws', headers={'Origin': origin})
+        assert error.value.status == 403
+    assert dashboard._clients == set()
+
+
+async def test_websocket_rejects_rebound_host_even_with_matching_origin(aiohttp_client):
+    from aiohttp import WSServerHandshakeError
+    import pytest
+    dashboard = WebDashboard()
+    client = await aiohttp_client(dashboard._app)
+    with pytest.raises(WSServerHandshakeError) as error:
+        await client.ws_connect('/ws', headers={
+            'Host': 'evil.example', 'Origin': 'http://evil.example'})
+    assert error.value.status == 403
+
+
+async def test_websocket_accepts_local_same_origin(aiohttp_client):
+    dashboard = WebDashboard()
+    client = await aiohttp_client(dashboard._app)
+    origin = str(client.make_url('/')).rstrip('/')
+    ws = await client.ws_connect('/ws', headers={'Origin': origin})
+    await ws.send_json({'type': 'get_config'})
+    assert (await ws.receive_json())['type'] == 'config'
+    await ws.close()
+
+
+def test_dashboard_binds_loopback(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(web_server.web, 'run_app', lambda app, **kwargs: captured.update(kwargs))
+    WebDashboard().run()
+    assert captured['host'] == '127.0.0.1'

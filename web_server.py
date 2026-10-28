@@ -19,6 +19,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import web
 
@@ -82,7 +83,9 @@ class WebDashboard:
     # ── aiohttp lifecycle ──────────────────────────────────────────
 
     def run(self) -> None:
-        web.run_app(self._app, host="0.0.0.0", port=self._port, print=self._on_startup)
+        web.run_app(
+            self._app, host="127.0.0.1", port=self._port, print=self._on_startup
+        )
 
     def _on_startup(self, msg: str) -> None:
         logger.info(msg)
@@ -94,6 +97,25 @@ class WebDashboard:
         return web.FileResponse(WEB_DIR / "index.html")
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
+        # Only a local page may control the unauthenticated local runtime.
+        # Validate Host as well as Origin to reject browser DNS rebinding.
+        try:
+            target = urlsplit(f"{request.scheme}://{request.host}")
+            if target.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("non-local host")
+            origin = request.headers.get("Origin")
+            if origin is not None:
+                source = urlsplit(origin)
+                def endpoint(url):
+                    return (url.scheme, url.hostname,
+                            url.port or (443 if url.scheme == "https" else 80))
+                if (source.scheme not in {"http", "https"} or
+                        source.username is not None or source.password is not None or
+                        source.path or source.query or source.fragment or
+                        endpoint(source) != endpoint(target)):
+                    raise ValueError("cross-origin client")
+        except ValueError:
+            raise web.HTTPForbidden(text="Local same-origin clients only") from None
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self._clients.add(ws)

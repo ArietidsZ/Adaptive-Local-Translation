@@ -106,3 +106,9 @@ local `silero_vad.jit` directly (dashboard `vad_model_path`), or the existing
 standard Torch Hub cache path. If absent, startup fails instead of fetching it.
 The Hugging Face cache directory does not relocate the Torch Hub cache. Online
 VAD loading retains the existing Torch Hub behavior; no weights are bundled.
+
+The dashboard binds to `127.0.0.1`, not the LAN. Browser WebSocket control must
+use a local Host and matching Origin; cross-origin pages and rebinding Host
+names are rejected before connection. Non-browser local clients without Origin
+remain supported. This is a local trust boundary, not multi-user authentication;
+do not expose the service through a public reverse proxy.
