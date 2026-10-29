@@ -212,3 +212,105 @@ def test_initial_status_send_failure_removes_client(monkeypatch):
             await dashboard._ws_handler(request)
         assert not dashboard._clients
     asyncio.run(scenario())
+
+
+def test_shutdown_delivers_flushed_tail_before_socket_close():
+    async def scenario():
+        dashboard = web_server.WebDashboard()
+        dashboard._loop = asyncio.get_running_loop()
+        events = []
+        class Socket:
+            async def send_json(self, message):
+                await asyncio.sleep(0)
+                events.append(message)
+            async def close(self, **kwargs):
+                events.append("closed")
+        dashboard._clients.add(Socket())
+        session = BlockingSession()
+        session.stop = lambda: dashboard._broadcast(
+            {"type": "result", "original": "tail"}
+        )
+        dashboard._session = session
+        await dashboard._shutdown(dashboard._app)
+        assert events == [{"type": "result", "original": "tail"}, "closed"]
+        assert not dashboard._pending_broadcasts
+        assert dashboard._session is None
+        dashboard._broadcast({"late": True})
+        await asyncio.sleep(0)
+        assert events[-1] == "closed"
+    asyncio.run(scenario())
+
+
+def test_shutdown_bounds_stalled_send_and_closes_socket(caplog):
+    async def scenario():
+        dashboard = web_server.WebDashboard()
+        dashboard._loop = asyncio.get_running_loop()
+        dashboard._drain_timeout = 0.01
+        events = []
+        class Socket:
+            async def send_json(self, message):
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    events.append("send cancelled")
+            async def close(self, **kwargs):
+                events.append("closed")
+        dashboard._clients.add(Socket())
+        dashboard._broadcast({"type": "result"})
+        await asyncio.wait_for(dashboard._shutdown(dashboard._app), 1)
+        await asyncio.sleep(0)
+        assert "closed" in events
+        assert "send cancelled" in events
+        assert not dashboard._pending_broadcasts
+        assert "Timed out draining" in caplog.text
+    asyncio.run(scenario())
+
+
+def test_completed_broadcast_callback_does_not_deadlock(monkeypatch):
+    from concurrent.futures import Future
+    dashboard = web_server.WebDashboard()
+    dashboard._loop = SimpleNamespace(is_closed=lambda: False)
+    def completed(coro, loop):
+        coro.close()
+        future = Future()
+        future.set_result(None)
+        return future
+    monkeypatch.setattr(web_server.asyncio, "run_coroutine_threadsafe", completed)
+    dashboard._broadcast({"type": "result"})
+    assert not dashboard._pending_broadcasts
+
+
+def test_loop_close_during_broadcast_submission_leaves_no_coroutine(monkeypatch):
+    dashboard = web_server.WebDashboard()
+    dashboard._loop = SimpleNamespace(is_closed=lambda: False)
+    submitted = []
+    def rejected(coro, loop):
+        submitted.append(coro)
+        raise RuntimeError("Event loop is closed")
+    monkeypatch.setattr(web_server.asyncio, "run_coroutine_threadsafe", rejected)
+    dashboard._broadcast({"type": "result"})
+    assert submitted[0].cr_frame is None
+    assert not dashboard._pending_broadcasts
+
+
+def test_failed_shutdown_keeps_session_for_cleanup_without_reopening_broadcasts():
+    async def scenario():
+        dashboard = web_server.WebDashboard()
+        dashboard._loop = asyncio.get_running_loop()
+        session = BlockingSession()
+        calls = []
+        def stop():
+            calls.append(True)
+            if len(calls) == 1:
+                raise RuntimeError("audio still stopping")
+            dashboard._broadcast({"type": "result", "original": "retry tail"})
+        session.stop = stop
+        dashboard._session = session
+        await dashboard._shutdown(dashboard._app)
+        assert dashboard._session is session
+        assert dashboard._broadcasts_closed
+        await dashboard._cleanup(dashboard._app)
+        assert dashboard._session is None
+        assert not dashboard._pending_broadcasts
+        assert len(calls) == 2
+    asyncio.run(scenario())

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,10 @@ class WebDashboard:
         self._lifecycle_lock = asyncio.Lock()
         self._stop_task: asyncio.Task | None = None
         self._closing = False
+        self._broadcast_lock = threading.Lock()
+        self._pending_broadcasts: set = set()
+        self._broadcasts_closed = False
+        self._drain_timeout = 5.0
         self._clients: set[web.WebSocketResponse] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = web.Application()
@@ -102,6 +107,22 @@ class WebDashboard:
 
     async def _shutdown(self, app: web.Application) -> None:
         self._closing = True
+        async with self._lifecycle_lock:
+            await self._stop_session()
+        # A successful stop flushes the final segment. Give queued sends a bounded
+        # chance to finish before closing sockets, including callbacks from threads.
+        with self._broadcast_lock:
+            self._broadcasts_closed = True
+            pending = list(self._pending_broadcasts)
+        if pending:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(asyncio.wrap_future(f) for f in pending),
+                                   return_exceptions=True),
+                    timeout=self._drain_timeout,
+                )
+            except TimeoutError:
+                logger.warning("Timed out draining final dashboard subtitles")
         for ws in list(self._clients):
             await ws.close(code=1001, message=b"Server shutdown")
 
@@ -311,7 +332,24 @@ class WebDashboard:
             for ws in stale:
                 self._clients.discard(ws)
 
-        asyncio.run_coroutine_threadsafe(_send(), loop)
+        with self._broadcast_lock:
+            if self._broadcasts_closed:
+                return
+            coroutine = _send()
+            try:
+                future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+            except RuntimeError:
+                coroutine.close()
+                return  # The event loop may have closed after the initial check.
+            self._pending_broadcasts.add(future)
+        # Register outside the lock: an already-finished future calls back inline.
+        future.add_done_callback(self._broadcast_finished)
+
+    def _broadcast_finished(self, future) -> None:
+        with self._broadcast_lock:
+            self._pending_broadcasts.discard(future)
+        if not future.cancelled():
+            future.exception()
 
 
 def main() -> None:
