@@ -144,6 +144,7 @@ class _QueuedAudioSource:
         with self._ingress_lock:
             if self._accepting:
                 self._ingress.push(chunk)
+                self._idle_wait.set()
 
     def stop(self) -> None:
         capture_error = None
@@ -175,13 +176,16 @@ class _QueuedAudioSource:
 
     def _drain_loop(self) -> None:
         while True:
+            # Clear before checking the queue: an enqueue after an empty pop
+            # must remain signalled until wait observes it.
+            self._idle_wait.clear()
             try:
                 chunk = self._ingress.pop_nowait()
             except queue.Empty:
                 if self._stopping:
                     return
 
-                self._idle_wait.wait(0.01)
+                self._idle_wait.wait()
                 continue
 
             if self._on_chunk is not None:
