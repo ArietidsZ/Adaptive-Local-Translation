@@ -112,3 +112,14 @@ use a local Host and matching Origin; cross-origin pages and rebinding Host
 names are rejected before connection. Non-browser local clients without Origin
 remain supported. This is a local trust boundary, not multi-user authentication;
 do not expose the service through a public reverse proxy.
+
+### Dashboard shutdown behavior
+
+Dashboard start, stop, and server cleanup are serialized. Cancelling a client
+request does not discard an in-flight audio stop: subsequent lifecycle operations
+wait for the same task, and a failed stop retains the session for retry.
+On normal server shutdown, the session is stopped and its final subtitle flush is
+allowed up to five seconds to finish sending before WebSockets close. This is a
+bounded best effort, not a delivery acknowledgement: disconnected or stalled
+clients, failed session cleanup, and forced process termination can still lose the
+last subtitle. Cleanup retries do not reopen closed client connections.

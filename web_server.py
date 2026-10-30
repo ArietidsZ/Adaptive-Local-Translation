@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -73,9 +74,19 @@ class WebDashboard:
         self._port = port
         self._cfg = Config()
         self._session: SessionController | None = None
+        self._lifecycle_lock = asyncio.Lock()
+        self._stop_task: asyncio.Task | None = None
+        self._closing = False
+        self._broadcast_lock = threading.Lock()
+        self._pending_broadcasts: set = set()
+        self._broadcasts_closed = False
+        self._drain_timeout = 5.0
         self._clients: set[web.WebSocketResponse] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = web.Application()
+        self._app.on_startup.append(self._startup)
+        self._app.on_shutdown.append(self._shutdown)
+        self._app.on_cleanup.append(self._cleanup)
         self._app.router.add_get("/", self._index_handler)
         self._app.router.add_get("/ws", self._ws_handler)
         self._app.router.add_static("/", WEB_DIR, show_index=False)
@@ -91,12 +102,45 @@ class WebDashboard:
         logger.info(msg)
         self._loop = asyncio.get_event_loop()
 
+    async def _startup(self, app: web.Application) -> None:
+        self._loop = asyncio.get_running_loop()
+
+    async def _shutdown(self, app: web.Application) -> None:
+        self._closing = True
+        async with self._lifecycle_lock:
+            await self._stop_session()
+        # A successful stop flushes the final segment. Give queued sends a bounded
+        # chance to finish before closing sockets, including callbacks from threads.
+        with self._broadcast_lock:
+            self._broadcasts_closed = True
+            pending = list(self._pending_broadcasts)
+        if pending:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(asyncio.wrap_future(f) for f in pending),
+                                   return_exceptions=True),
+                    timeout=self._drain_timeout,
+                )
+            except TimeoutError:
+                logger.warning("Timed out draining final dashboard subtitles")
+        for ws in list(self._clients):
+            await ws.close(code=1001, message=b"Server shutdown")
+
+    async def _cleanup(self, app: web.Application) -> None:
+        self._closing = True
+        async with self._lifecycle_lock:
+            # Surface incomplete shutdown to the server rather than claiming cleanup.
+            if not await self._stop_session():
+                raise RuntimeError("Dashboard session cleanup failed")
+
     # ── WebSocket handler ──────────────────────────────────────────
 
     async def _index_handler(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(WEB_DIR / "index.html")
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
+        if self._closing:
+            raise web.HTTPServiceUnavailable(text="Server shutting down")
         # Only a local page may control the unauthenticated local runtime.
         # Validate Host as well as Origin to reject browser DNS rebinding.
         try:
@@ -118,20 +162,23 @@ class WebDashboard:
             raise web.HTTPForbidden(text="Local same-origin clients only") from None
         ws = web.WebSocketResponse()
         await ws.prepare(request)
+        if self._closing:
+            await ws.close(code=1001, message=b"Server shutdown")
+            return ws
         self._clients.add(ws)
         logger.info("Client connected (%d total)", len(self._clients))
 
-        # Send current state
-        if self._session is not None:
-            status = self._session.status
-            await ws.send_json(
-                {
-                    "type": "status",
-                    "state": str(status.state),
-                }
-            )
-
         try:
+            # Send current state
+            if self._session is not None:
+                status = self._session.status
+                await ws.send_json(
+                    {
+                        "type": "status",
+                        "state": str(status.state),
+                    }
+                )
+
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     await self._handle_client_msg(ws, msg.data)
@@ -170,42 +217,60 @@ class WebDashboard:
     def _publish_stop_failure(self) -> None:
         self._broadcast({"type": "status", "state": str(RuntimeState.FAILED)})
 
+    def _observe_stop(self, task: asyncio.Task) -> None:
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                logger.error("Background session stop failed: %s", error)
+
+    async def _stop_session(self) -> bool:
+        """Called under the lifecycle lock; retain an in-flight stop on cancellation."""
+        if self._session is None:
+            return True
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(asyncio.to_thread(self._session.stop))
+            # Observe failures even if the requesting client has gone away.
+            # Awaiting this task later still raises and preserves retry semantics.
+            self._stop_task.add_done_callback(self._observe_stop)
+        try:
+            # Cancelling a websocket handler cannot stop its underlying thread.
+            # The next lifecycle operation must await this same owned task.
+            await asyncio.shield(self._stop_task)
+        except Exception:
+            self._stop_task = None
+            logger.exception("Failed to stop session via web dashboard")
+            self._publish_stop_failure()
+            return False
+        self._stop_task = None
+        self._session = None
+        return True
+
     async def _start_engine(self) -> None:
-        if self._session is not None:
-            status = self._session.status
-            if status.state in {RuntimeState.RUNNING, RuntimeState.STARTING}:
+        async with self._lifecycle_lock:
+            if self._closing:
                 return
-
-            old_session = self._session
-            try:
-                await asyncio.to_thread(old_session.stop)
-            except Exception:
-                logger.exception("Failed to stop previous session during restart")
-                self._publish_stop_failure()
+            if self._session is not None:
+                status = self._session.status
+                if (self._stop_task is None and
+                        status.state in {RuntimeState.RUNNING, RuntimeState.STARTING}):
+                    return
+                if not await self._stop_session():
+                    return
+            # Shutdown may have started while the previous stop was awaited.
+            if self._closing:
                 return
-
-            self._session = None
-
-        self._session = build_cli_session(
-            self._cfg,
-            subtitle_sink=RuntimeSubtitleSink(self._broadcast),
-            status_sink=RuntimeStatusSink(self._broadcast),
-        )
-        self._session.start()
-        logger.info("Session started via web dashboard")
+            self._session = build_cli_session(
+                self._cfg,
+                subtitle_sink=RuntimeSubtitleSink(self._broadcast),
+                status_sink=RuntimeStatusSink(self._broadcast),
+            )
+            self._session.start()
+            logger.info("Session started via web dashboard")
 
     async def _stop_engine(self) -> None:
-        if self._session is not None:
-            session = self._session
-            try:
-                await asyncio.to_thread(session.stop)
-            except Exception:
-                logger.exception("Failed to stop session via web dashboard")
-                self._publish_stop_failure()
-                return
-
-            self._session = None
-            logger.info("Session stopped via web dashboard")
+        async with self._lifecycle_lock:
+            if await self._stop_session():
+                logger.info("Session stopped via web dashboard")
 
     def _apply_config(self, msg: dict[str, Any]) -> None:
         """Update config from client settings, to be used on next start."""
@@ -267,7 +332,24 @@ class WebDashboard:
             for ws in stale:
                 self._clients.discard(ws)
 
-        asyncio.run_coroutine_threadsafe(_send(), loop)
+        with self._broadcast_lock:
+            if self._broadcasts_closed:
+                return
+            coroutine = _send()
+            try:
+                future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+            except RuntimeError:
+                coroutine.close()
+                return  # The event loop may have closed after the initial check.
+            self._pending_broadcasts.add(future)
+        # Register outside the lock: an already-finished future calls back inline.
+        future.add_done_callback(self._broadcast_finished)
+
+    def _broadcast_finished(self, future) -> None:
+        with self._broadcast_lock:
+            self._pending_broadcasts.discard(future)
+        if not future.cancelled():
+            future.exception()
 
 
 def main() -> None:

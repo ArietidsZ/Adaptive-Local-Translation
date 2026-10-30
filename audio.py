@@ -26,6 +26,7 @@ class AudioCapture:
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
         self._running = False
+        self._lifecycle_lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
     # ── public API ─────────────────────────────────────────────────
@@ -37,22 +38,44 @@ class AudioCapture:
         on_error: Callable[[Exception], None] | None = None,
     ) -> None:
         """Start capturing.  *callback* receives (N,) float32 arrays at 16 kHz."""
-        if self._running:
-            return
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._capture_loop,
-            args=(callback, on_error),
-            daemon=True,
-            name="audio-capture",
-        )
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._running:
+                return
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("previous audio capture worker has not stopped")
+            worker = threading.Thread(
+                target=self._capture_loop,
+                args=(callback, on_error),
+                daemon=True,
+                name="audio-capture",
+            )
+            self._thread = worker
+            self._running = True
+            try:
+                self._thread.start()
+            except Exception:
+                self._running = False
+                if not self._thread.is_alive():
+                    self._thread = None
+                raise
 
     def stop(self) -> None:
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=3.0)
-            self._thread = None
+        """Stop capture, retaining ownership if the worker cannot drain yet."""
+        with self._lifecycle_lock:
+            self._running = False
+            worker = self._thread
+        if worker is None:
+            return
+        if worker is threading.current_thread():
+            raise RuntimeError("audio capture worker cannot join itself")
+        # Callbacks may reenter lifecycle methods; never hold their lock while
+        # waiting for the capture worker to finish.
+        worker.join(timeout=3.0)
+        if worker.is_alive():
+            raise TimeoutError("audio capture worker did not stop within 3 seconds")
+        with self._lifecycle_lock:
+            if self._thread is worker:
+                self._thread = None
 
     # ── internals ──────────────────────────────────────────────────
 

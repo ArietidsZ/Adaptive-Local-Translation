@@ -49,6 +49,8 @@ def test_build_cli_session_returns_session_controller() -> None:
 
 def test_build_cli_session_starts_operational_audio_processing(monkeypatch) -> None:
     call_order = []
+    processing_threads = []
+    producer_thread = threading.get_ident()
     sink = FakeSink()
 
     class FakeAudioCaptureAdapter:
@@ -68,6 +70,7 @@ def test_build_cli_session_starts_operational_audio_processing(monkeypatch) -> N
             del cfg
 
         def process_chunk(self, chunk, on_speech) -> None:
+            processing_threads.append(threading.get_ident())
             call_order.append("segmenter")
             on_speech(chunk)
 
@@ -106,12 +109,15 @@ def test_build_cli_session_starts_operational_audio_processing(monkeypatch) -> N
     session.start()
     session.stop()
 
-    assert call_order.index("after-callback") < call_order.index("segmenter")
+    # A separate drainer may run before the producer's next statement.
+    assert processing_threads and all(t != producer_thread for t in processing_threads)
     assert sink.values[-1].translated_text == "ni hao"
 
 
 def test_build_cli_session_stop_drains_buffered_audio(monkeypatch) -> None:
     call_order = []
+    processing_threads = []
+    producer_thread = threading.get_ident()
     sink = FakeSink()
 
     class FakeAudioCaptureAdapter:
@@ -132,6 +138,7 @@ def test_build_cli_session_stop_drains_buffered_audio(monkeypatch) -> None:
             del cfg
 
         def process_chunk(self, chunk, on_speech) -> None:
+            processing_threads.append(threading.get_ident())
             call_order.append("segmenter")
             on_speech(chunk)
 
@@ -172,7 +179,8 @@ def test_build_cli_session_stop_drains_buffered_audio(monkeypatch) -> None:
     session.stop()
 
     assert call_order.index("stop") < call_order.index("segmenter")
-    assert call_order.index("after-stop-chunk") < call_order.index("segmenter")
+    # A separate drainer may run before the producer's next statement.
+    assert processing_threads and all(t != producer_thread for t in processing_threads)
     assert call_order.index("segmenter") < call_order.index("flush")
     assert sink.values[-1].translated_text == "ni hao"
 
@@ -330,6 +338,8 @@ def test_run_cli_cleans_up_after_async_startup_failure(monkeypatch) -> None:
 
 def test_run_cli_drains_buffered_audio_during_shutdown(monkeypatch) -> None:
     call_order = []
+    processing_threads = []
+    producer_thread = threading.get_ident()
     sink = FakeSink()
 
     class FakeAudioCaptureAdapter:
@@ -351,6 +361,7 @@ def test_run_cli_drains_buffered_audio_during_shutdown(monkeypatch) -> None:
             del cfg
 
         def process_chunk(self, chunk, on_speech) -> None:
+            processing_threads.append(threading.get_ident())
             call_order.append("segmenter")
             on_speech(chunk)
 
@@ -390,7 +401,8 @@ def test_run_cli_drains_buffered_audio_during_shutdown(monkeypatch) -> None:
     cli_module.run_cli(Config())
 
     assert call_order.index("stop") < call_order.index("segmenter")
-    assert call_order.index("after-stop-chunk") < call_order.index("segmenter")
+    # A separate drainer may run before the producer's next statement.
+    assert processing_threads and all(t != producer_thread for t in processing_threads)
     assert sink.values[-1].translated_text == "ni hao"
     assert sink.cleared == 1
     assert sink.closed == 1
